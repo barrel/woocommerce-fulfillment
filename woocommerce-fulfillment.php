@@ -22,8 +22,8 @@ woothemes_queue_update( plugin_basename( __FILE__ ), '9de8640767ba64237808ed7f24
 
 // we CAN'T use "wc-api". SS uses next format to call url: [Your XML Endpoint]?action=export&start_date=[Start Date]&end_date=[End Date]&page=1
 // we keep access via hook
-add_action( "parse_request", "woo_ss_parse_request" );
-function woo_ss_parse_request( &$wp ) {
+add_action( "parse_request", "woo_sf_parse_request" );
+function woo_sf_parse_request( &$wp ) {
 	if ( $wp->request == "woo-fulfillment-api" ) {
 		include_once dirname( __FILE__ ) . "/handler.php";
 		$hander = new WC_Fulfillment_Handler();
@@ -33,8 +33,8 @@ function woo_ss_parse_request( &$wp ) {
 
 
 // July 2013: add custom fields
-register_activation_hook( __FILE__, 'woo_ss_plugin_activate' );
-function woo_ss_plugin_activate() {
+register_activation_hook( __FILE__, 'woo_sf_plugin_activate' );
+function woo_sf_plugin_activate() {
 	global $wpdb;
 	
 	$wpdb->insert( $wpdb->postmeta, array( 'meta_key' => 'custom_field_Fulfillment_1' ) );
@@ -53,139 +53,183 @@ class WC_Fulfillment {
 		load_plugin_textdomain( $this->domain, false, basename( dirname( __FILE__ ) ) . '/languages' );
 
 		add_action( 'woocommerce_settings_tabs', array( &$this, 'tab' ), 10 );
-		add_action( 'woocommerce_settings_tabs_woo_ss', array( &$this, 'settings_tab_action' ) , 10 );
-		add_action( 'woocommerce_update_options_woo_ss', array( &$this, 'save_settings' ) , 10 );
-		add_action( 'woocommerce_checkout_order_processed', array(&$this, 'process_new_order'), 10, 2);
+		add_action( 'woocommerce_settings_tabs_woo_sf', array( &$this, 'settings_tab_action' ), 10 );
+		add_action( 'woocommerce_update_options_woo_sf', array( &$this, 'save_settings' ), 10 );
+		add_action( 'woocommerce_payment_complete', array(&$this, 'process_order'), 10 );
+
+		add_filter( 'cron_schedules', array(&$this, 'cron_add_interval') );
+		add_action( 'init', array(&$this, 'cron_setup_schedule') );
+		add_action( 'cron_repeat_event', array(&$this, 'cron_process_all') );
+
+		add_filter( 'woo_sf_filter_country', array(&$this, 'convert_country_codes'));
 	}
 	
-	function submit_order($data){
-		$api_uri = "http://www.werecognizeyou.com/WebServices/Fulfillment/api/FulfillmentOrder/SubmitOrder";
-
-		$ch = curl_init();
-
-		curl_setopt($ch, CURLOPT_AUTOREFERER, TRUE);
-		curl_setopt($ch, CURLOPT_HEADER, 0);
-		curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-		curl_setopt($ch, CURLOPT_URL, $api_uri);
-		curl_setopt($ch, CURLOPT_FOLLOWLOCATION, TRUE);
-		curl_setopt($ch, CURLOPT_POST, count($data));
-		curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
-
-		$json = curl_exec($ch);
-		curl_close($ch);
-		$result = @json_decode($json);
-
-		printf("<pre>%s</pre>", print_r(array(http_build_query($data), $result), true)); exit;
-		if ($result) return $result;
-		else return $json;
+	function cron_add_interval( $schedules ) {
+		$schedules['hourly'] = array(
+			'interval' => 3600, 
+			'display' => __( 'Once Hourly' )
+		);
+		return $schedules;
 	}
 
-	function process_new_order($order_id, $posted) {
+	function cron_setup_schedule() {
+		if ( ! wp_next_scheduled( 'cron_repeat_event' ) ) {
+			$start = strtotime("Today 7 PM");
+			wp_schedule_event( $start, 'hourly', 'cron_repeat_event'); 
+		}
+	}
+
+	function cron_process_all(){
+		$orders = new WP_Query(array(
+			'post_type'      => 'shop_order',
+			'post_status'    => 'publish',
+			'posts_per_page' => -1,
+			'tax_query'      => array(
+				array(
+					'taxonomy' => 'shop_order_status',
+					'field' => 'slug',
+					'terms' => array('processing', 'completed')
+				)
+			)
+		));
+		foreach($orders as $order) {
+			$wc_order = new WC_Order($order->ID);
+			switch($wc_order->status) {
+				case 'processing': $this->process_order($order->ID); break;
+				case 'completed' : $this->update_order($order->ID); break;
+			}
+		}
+	}
+
+	function xtrim ($in){
+		return trim($in, "/");
+	}
+	
+	function api_url($endpoint) {
+		$url = array(
+			esc_url( get_option('woo_sf_api_domain') ),
+			get_option('woo_sf_api_url'),
+			$endpoint
+		);
+		return implode('/', array_map(array(&$this, 'xtrim'), $url));
+	}
+	
+	function api_init($overrides = array()) {
+		$ch = curl_init();
+		$options = $overrides + array(
+			CURLOPT_AUTOREFERER    => 1,
+			CURLOPT_HEADER         => 0,
+			CURLOPT_RETURNTRANSFER => 1,
+			CURLOPT_FOLLOWLOCATION => TRUE
+		);
+		curl_setopt_array($ch, $options);
+		$data = curl_exec($ch);
+		curl_close($ch);
+		$result = @json_decode($data);
+
+		if ($result) {
+			return $result;
+		} else {
+			if (WP_DEBUG === TRUE) {
+				wp_die( $data );
+			} else {
+				return false;
+			}
+		}
+	}
+	
+	function api($type = "update", $data){
+		switch ($type){
+			case 'submit': $end = "SubmitOrder"; break;
+			case 'update': $end = "GetOrderHistory"; break;
+		}
+		return $this->api_init(array(
+			CURLOPT_URL        => $this->api_url($end),
+			CURLOPT_POST       => count($data),
+			CURLOPT_POSTFIELDS => http_build_query($data),
+		));
+	}
+
+	/**
+	 * Note: CA Short ERP only supports 3-digit country codes.
+	 * TODO: Modify filter to support countries beyond US.
+	**/
+	function convert_country_codes($code) {
+		switch($code){
+			case "US": return "USA"; break;
+		}
+		return $code;
+	}
+
+	function process_order($order_id) {
 		$order = new WC_Order($order_id);
+		$order_details = array();
+		
+		$shipping_name = '';
+		if ( !empty($order->shipping_first_name)) $shipping_name .= $order->shipping_first_name;
+		else $shipping_name .= $order->billing_first_name;
+		
+		if ( !empty($order->shipping_last_name)) $shipping_name .= " ".$order->shipping_last_name;
+		else $shipping_name .= " ".$order->billing_last_name;
+		
+		$order_items = $order->get_items();
+		
+		foreach( $order_items as $item_id => $item ) {
+			/**
+			 * NOTE: CA Short ERP does not support flat discount per item;
+			 * DiscountAmount only applied to Order->DiscountAmount
+			**/
+			$product = $order->get_product_from_item($item);
+			$order_details[] = array(
+				"ItemNumber"     => $product->get_sku(),
+				"Quantity"       => $item['qty'],
+				"UnitPrice"      => $product->get_price(),
+				"Freight"        => 0,
+			);
+		}
+
 		$order_array = array(
-			"Username" => 'woo',
-			"Password" => 'cashort1',
+			"Username" => get_option('woo_sf_username'),
+			"Password" => get_option('woo_sf_password'),
 			"Order"    => array(
-				"OrderDate"    => $order->order_date,
-/*
-				"Freight"      => '',
-				"MiscCharges"  => '',
-*/
-				"SalesTax"     => $order->order_tax,
-/*
-				"DiscountType" => array(
-					
-				),
-				"DiscountAmount"        => '',
-				"PurchaseOrderNumber"   => '',
-				"ReferenceOrderNumber"  => '',
-*/
-				"Address"               => array(
-					"Description"  => 'Shipping Address',
-					"AttnContact"  => "{$order->billing_first_name} {$order->billing_last_name}",
+				"OrderDate"            => $order->order_date,
+				"Freight"              => $order->order_shipping,
+				"SalesTax"             => $order->order_tax,
+				"DiscountType"         => 1,
+				"DiscountAmount"       => $order->order_discount,
+				"ReferenceOrderNumber" => $order_id,
+				/*
+				"MiscCharges"          => '',
+				"PurchaseOrderNumber"  => '',
+				*/
+				"Address"              => array(
+					"Description"  => $shipping_name,
+					"AttnContact"  => $shipping_name,
 					"Line1"        => $order->shipping_address_1,
 					"Line2"        => $order->shipping_address_2,
 					"City"         => $order->shipping_city,
 					"State"        => $order->shipping_state,
-					"County"       => $order->shipping_state,
 					"Zip"          => $order->shipping_postcode,
-					"Country"      => $order->shipping_country,
+					"Country"      => apply_filters('woo_sf_filter_country', $order->shipping_country ),
 					"EmailAddress" => $order->billing_email,
 				),
-				"Phone" => array(
-					"Phone1" => $order->billing_phone,
-				),
-				"OrderDetails" => array(
-					array(
-						"ItemNumber"     => 1,
-						"Quantity"       => 1,
-						"UnitPrice"      => 1,
-						//"DiscountAmount" => '',
-						"Freight"        => 1,
-					)
-				),
+				"Phone"        => array( "Phone1" => $order->billing_phone ),
+				"OrderDetails" => $order_details,
 			)
 		);
-		printf("<pre>%s</pre>", print_r($posted, true));
-		$this->submit_order($order_array);
-		
-		/*
-    [id] => 1411
-    [status] => pending
-    [order_date] => 2014-07-29 17:49:46
-    [modified_date] => 2014-07-29 17:49:46
-    [customer_note] => 
-    [order_key] => 
-    [billing_first_name] => Wes
-    [billing_last_name] => Moore
-    [billing_company] => 
-    [billing_address_1] => 547 W 142nd St
-    [billing_address_2] => 7S
-    [billing_city] => New York
-    [billing_postcode] => 10013
-    [billing_country] => US
-    [billing_state] => AZ
-    [billing_email] => wes.turner@barrelny.com
-    [billing_phone] => 5026082144
-    [shipping_first_name] => Wes
-    [shipping_last_name] => Moore
-    [shipping_company] => 
-    [shipping_address_1] => 547 W 142nd St
-    [shipping_address_2] => 7S
-    [shipping_city] => New York
-    [shipping_postcode] => 10013
-    [shipping_country] => US
-    [shipping_state] => AZ
-    [shipping_method] => 
-    [shipping_method_title] => 
-    [payment_method] => 
-    [payment_method_title] => 
-    [order_discount] => 
-    [cart_discount] => 
-    [order_tax] => 
-    [order_shipping] => 
-    [order_shipping_tax] => 
-    [order_total] => 
-    [taxes] => 
-    [customer_user] => 
-    [user_id] => 0
-    [completed_date] => 2014-07-29 17:49:46
-    [billing_address] => 
-    [formatted_billing_address] => 
-    [shipping_address] => 
-    [formatted_shipping_address] => 
-    [post_status] => publish
-    [prices_include_tax] => 
-    [tax_display_cart] => excl
-    [display_totals_ex_tax] => 1
-    [display_cart_ex_tax] => 1
-		*/
+
+		$fulfilled = $this->api('submit', $order_array);
+
+		if ( $fulfilled && $fulfilled->OrderSubmitResult === 0 && is_numeric($fulfilled->OrderNumber) ) {
+			update_post_meta($order_id, 'woo_sf_order_id', $fulfilled->OrderNumber);
+			$order->update_status('completed');
+		}
 	}
 
 	function tab() {
 		$class = 'nav-tab';
-		if ( $this->current_tab == 'woo_ss' ) $class .= ' nav-tab-active';
-		echo '<a href="' . admin_url( 'admin.php?page=woocommerce&tab=woo_ss' ) . '" class="' . $class . '">Fulfillment</a>';
+		if ( $this->current_tab == 'woo_sf' ) $class .= ' nav-tab-active';
+		echo '<a href="' . admin_url( 'admin.php?page=woocommerce&tab=woo_sf' ) . '" class="' . $class . '">Fulfillment</a>';
 	}
 
 	function shipname( $ship_method ) {
@@ -193,6 +237,7 @@ class WC_Fulfillment {
 	}
 
 	function init_form_fields()	{
+
 		$this->form_fields = array(
 			array(	
 				'name' => __( 'Fulfillment plugin for Woocommerce', $this->domain ),
@@ -205,16 +250,53 @@ class WC_Fulfillment {
 				'id' => 'about' 
 			),
 			array(	
+				'name' => __( 'Import', $this->domain ),
+				'type' => 'title',
+				'desc' => $this->ship_details_plugin . $this->shipment_tracking_plugin,
+				'id' => 'import' 
+			),
+			array(
+				'name' => __( 'Order Status After Fulfilled', $this->domain ),
+				'desc' => '',
+				'tip' => '',
+				'id' => 'woo_sf_import_status',
+				'css' => '',
+				'std' => '',
+				'type' => 'select',
+				'options' => $this->order_statuses
+			),
+			array( 'type' => 'sectionend', 'id' => 'import' ),
+			array(	
 				'name' => __( 'Settings', $this->domain ),
 				'type' => 'title',
 				'desc' => '',
 				'id' => 'settings' 
 			),
 			array(
+				'name' => __( 'API Domain', $this->domain ),
+				'desc' => __( '', $this->domain ),
+				'tip' => '',
+				'id' => 'woo_sf_api_domain',
+				'css' => '',
+				'class' => 'input-text regular-input',
+				'std' => '',
+				'type' => 'text',
+			),
+			array(
+				'name' => __( 'API Service Route', $this->domain ),
+				'desc' => __( '', $this->domain ),
+				'tip' => '',
+				'id' => 'woo_sf_api_url',
+				'css' => '',
+				'class' => 'input-text regular-input',
+				'std' => '',
+				'type' => 'text',
+			),
+			array(
 				'name' => __( 'Username', $this->domain ),
 				'desc' => __( '', $this->domain ),
 				'tip' => '',
-				'id' => 'woo_ss_username',
+				'id' => 'woo_sf_username',
 				'css' => '',
 				'std' => '',
 				'type' => 'text',
@@ -223,172 +305,33 @@ class WC_Fulfillment {
 				'name' => __( 'Password', $this->domain ),
 				'desc' => __( '', $this->domain ),
 				'tip' => '',
-				'id' => 'woo_ss_password',
+				'id' => 'woo_sf_password',
 				'css' => '',
 				'std' => '',
 				'type' => 'text',
-			),
-			array(
-				'name' => __( 'Url to custom page', $this->domain ),
-				'desc' => __( 'Set Permalinks in Settings>Permalinks. Do NOT use Default', $this->domain ),
-				'tip' => '',
-				'id' => 'woo_ss_api_url',
-				'css' => 'min-width:300px;color:grey',
-				'std' => $this->url,
-				'default' => $this->url, //for Woocommerce 2.0
-				'type' => 'text',
-			),
-			array(
-				'name' => __( 'Log requests', $this->domain ),
-				'desc' => "<a target='_blank' href='{$this->url_log}'>" . __( 'View Log', $this->domain ) . "</a>",
-				'tip' => '',
-				'id' => 'woo_ss_log_requests',
-				'css' => '',
-				'std' => '',
-				'type' => 'checkbox',
 			),
 			array( 
 				'type' => 'sectionend', 
 				'id' => 'settings' 
 			),
-
+		);
+		
+		$endpoint = array( 'SubmitOrder', 'GetOrderHistory');
+		foreach ( $endpoint as $idx => $end )
+			$endpoint[$idx] = sprintf('<p class="update-nag" style="margin-top: 0;">%s</p>', str_replace($end, sprintf('<b>%s</b>', $end), $this->api_url($end)) );
+			
+		$this->form_fields = array_merge( $this->form_fields, array(
 			array(	
-				'name' => __( 'Alternate Authentication', $this->domain ),
+				'name' => __( 'Registered Endpoints', $this->domain ),
 				'type' => 'title',
-				'desc' => '<font color="red">' . __( 'For use on webservers which run PHP in CGI mode. Add "?auth_key=value" to test url', $this->domain ) . '</font>',
-				'id' => 'testing' 
-			),
-			array(
-				'name' => __( 'Authentication Key', $this->domain ),
-				'desc' => __( 'Enter long, random string here.', $this->domain ),
-				'tip' => '',
-				'id' => 'woo_ss_auth_key',
-				'css' => 'min-width:300px;color:grey',
-				'std' => '',
-				'type' => 'text',
+				'desc' => implode('<br/>', $endpoint),
+				'id' => 'endpoint' 
 			),
 			array( 
 				'type' => 'sectionend', 
-				'id' => 'altAuth' 
+				'id' => 'endpoint' 
 			),
-			array(	
-				'name' => __( 'Export', $this->domain ),
-				'type' => 'title',
-				'desc' => '',
-				'id' => 'export' 
-			),
-		);
-
-		// may 2013
-		$this->form_fields[] =
-			array(
-			'name' => __( 'Number of Records to Export Per Page', $this->domain ),
-			'desc' => '',
-			'tip' => '',
-			'id' => 'woo_ss_export_pagesize',
-			'css' => '',
-			'std' => '100',
-			'default' => '100',
-			'type' => 'select',
-			'options' => array ( 50 => 50, 75 => 75, 100 => 100, 150 => 150 )
-		);
-		
-
-		//add checkboxes for export status
-		$count_status = count( $this->order_statuses );
-		for ( $i = 0; $i < $count_status; $i++ ) {
-			$status = $this->order_statuses[ $i ];
-			$mode = "";
-			if ( $i == 0 )
-				$mode = "start";
-			if ( $i == $count_status - 1 )
-				$mode = "end";
-
-			$this->form_fields[] =
-				array(
-					'name' => __( 'Order Status to look for when importing into Fulfillment', $this->domain ),
-					'desc' => ucwords( $status ),
-					'tip' => '',
-					'id' => 'woo_ss_export_status_' . md5( $status ),
-					'css' => '',
-					'std' => '',
-					'checkboxgroup' => $mode,
-					'type' => 'checkbox',
-				);
-		}
-
-		// for export shipment
-		$count_status = count( $this->shipping_methods );
-		reset( $this->shipping_methods );
-		$method = current( $this->shipping_methods );
-		for ( $i = 0; $i < $count_status; $i++ ) {
-			$mode = "";
-			if ( $i == 0 )
-				$mode = "start";
-			if ( $i == $count_status - 1 )
-				$mode = "end";
-
-			$this->form_fields[] =
-				array(
-					'name' => __( 'Shipping Methods to expose to Fulfillment', $this->domain ),
-					'desc' => $method->title,
-					'tip' => '',
-					'id' => 'woo_ss_export_shipping_' . $method->id,
-					'css' => '',
-					'std' => '',
-					'checkboxgroup' => $mode,
-					'type' => 'checkbox',
-				);
-			$method = next( $this->shipping_methods );
-		}
-
-		// July 2013 : export Coupon Code
-		$this->form_fields[] =
-			array(
-			'name' => __( 'Export Order Coupon Code(s) to', $this->domain ),
-			'desc' => '',
-			'tip' => '',
-			'id' => 'woo_ss_export_coupon_position',
-			'css' => '',
-			'std' => 'CustomField1',
-			'default' => 'CustomField1',
-			'type' => 'select',
-			'options' => array ( "None" => "None", "CustomField1" => "CustomField1", "CustomField2" => "CustomField2", "CustomField3" => "CustomField3" )
-		);
-
-		// 
-		$this->form_fields[] =
-			array(
-				'name' => __( 'System Notes', $this->domain ),
-				'desc_tip' => __( 'System Notes will be excluded from field InternalNotes (case insensitive)', $this->domain ),
-				'tip' => '',
-				'id' => 'woo_ss_export_system_notes',
-				'css' => '',
-				'std' => '',
-				'type' => 'textarea',
-				'args' => 'cols=60 rows=5', 
-				'custom_attributes'=> array( 'cols' => 60, 'rows' => 5 ), //for Woocommerce 2.0
-			);
-
-
-		$this->form_fields = array_merge( $this->form_fields, array(
-			array( 'type' => 'sectionend', 'id' => 'export' ),
-			array(	'name' => __( 'Import', $this->domain ),
-				'type' => 'title',
-				'desc' => $this->ship_details_plugin . $this->shipment_tracking_plugin,
-				'id' => 'import' ),
-				array(
-					'name' => __( 'Order Status to move it to when the shipnotify action is presented', $this->domain ),
-					'desc' => '',
-					'tip' => '',
-					'id' => 'woo_ss_import_status',
-					'css' => '',
-					'std' => '',
-					'type' => 'select',
-					'options' => $this->order_statuses
-				),
-			array( 'type' => 'sectionend', 'id' => 'import' ),
-		) );
+		));
 	}
 
 	function load_settings() {
@@ -396,47 +339,45 @@ class WC_Fulfillment {
 
 		$this->shipment_tracking_plugin = $this->ship_details_plugin = "";
 		if ( is_plugin_active( "wooshippinginfo/wootrackinfo.php" ) )
-			$this->ship_details_plugin = '<h3><font color="blue">' . __( "Plugin 'Shipping Details for WooCommerce' detected. Script will update tracking information", $this->domain ) . '</font></h3>';
-		if ( is_plugin_active( "woocommerce-shipment-tracking/shipment-tracking.php" ) )
-			$this->shipment_tracking_plugin = '<h3><font color="blue">' . __( "Plugin 'Shipment Tracking for WooCommerce' detected. Script will update tracking information", $this->domain ) . '</font></h3>';
+			$this->ship_details_plugin = sprintf(
+				'<p class="update-nag below-h2" style="margin-top: 0px;">%s</p>',
+				__( "Plugin <b>Shipping Details for WooCommerce</b> detected. Script will update tracking information", $this->domain )
+			);
 
-		// July 2013 url fixed
+		if ( is_plugin_active( "woocommerce-shipment-tracking/shipment-tracking.php" ) )
+			$this->shipment_tracking_plugin = sprintf(
+				'<p class="update-nag below-h2" style="margin-top: 0px;">%s</p>',
+				__( "Plugin <b>Shipment Tracking for WooCommerce</b> detected. Script will update tracking information", $this->domain )
+			);
+
+		// Fulfillment API URL
 		$this->url = home_url( '/' ) . 'woo-fulfillment-api';
 
-		$folder = basename( dirname( __FILE__ ) );
-		$this->url_log = site_url() . "/wp-content/plugins/$folder/handler.txt";
-
+		// Order Statuses
 		$order_statuses = get_terms( "shop_order_status", "hide_empty=0" );
 		$this->order_statuses = array();
 		foreach ( $order_statuses as $status ) {
 			$this->order_statuses[] = $status->name ;
 		}
 
+		// Shipping Methods
 		$this->shipping_methods = $woocommerce->shipping->load_shipping_methods();
 
-		if( !get_option( 'woo_ss_export_system_notes' ) ) {
-			$default_notes = file_get_contents( dirname( __FILE__ ) . '/data/system-notes.txt' );
-			update_option( 'woo_ss_export_system_notes' , $default_notes );
-		}
 	}
 
 	function settings_tab_action() {
 		global $woocommerce_settings;
-		$current_tab = 'woo_ss';
+		$current_tab = 'woo_sf';
 
 		$this->load_settings();
-
-		// Display settings for this tab ( make sure to add the settings to the tab ).
 		$this->init_form_fields();
 		$woocommerce_settings[ $current_tab ] = $this->form_fields;
 		woocommerce_admin_fields( $woocommerce_settings[ $current_tab ] );
 	}
 
-
-
 	function save_settings() {
 		global $woocommerce_settings;
-		$current_tab = 'woo_ss';
+		$current_tab = 'woo_sf';
 
 		$this->load_settings();
 
@@ -444,7 +385,6 @@ class WC_Fulfillment {
 		$woocommerce_settings[ $current_tab ] = $this->form_fields;
 		woocommerce_update_options( $woocommerce_settings[ $current_tab ] );
 
-		delete_option( 'woo_ss_api_url' ); // don't update api url
 		return true;
 	}
 }

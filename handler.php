@@ -7,11 +7,11 @@ class WC_ShipStation_Handler {
 		global $woocommerce;
 
 		$this->domain = 'woo-shipstation';
-
+		
 		$login_ok = false;
 		if ( !empty ( $_GET['auth_key'] ) )
 		{
-			if ( get_option( 'woo_ss_auth_key' ) != $_GET['auth_key'] )
+			if ( get_option( 'woo_sf_auth_key' ) != $_GET['auth_key'] )
 				$this->die_log( __( 'Wrong auth_key passed.', $this->domain ) );
 			$login_ok = true;
 		}
@@ -31,11 +31,11 @@ class WC_ShipStation_Handler {
 			if ( empty( $_SERVER['PHP_AUTH_USER'] ) || empty( $_SERVER['PHP_AUTH_PW'] ) )
 				 $this->die_log( __( 'Basic HTTP Authentication is required. Please, add http://username:password@ to current url.', $this->domain ) );
 			//bad user/pass?
-			if ( $_SERVER['PHP_AUTH_USER'] != get_option( 'woo_ss_username' ) || $_SERVER['PHP_AUTH_PW'] != get_option( 'woo_ss_password' ) )
+			if ( $_SERVER['PHP_AUTH_USER'] != get_option( 'woo_sf_username' ) || $_SERVER['PHP_AUTH_PW'] != get_option( 'woo_sf_password' ) )
 				$this->die_log( __( "Basic HTTP Authentication failed. Please, update username/password in 'Custom Store Setup' at ShipStation site", $this->domain ) );
 		}
 
-		if ( get_option( 'woo_ss_log_requests' ) )
+		if ( get_option( 'woo_sf_log_requests' ) )
 		{
 			$params = $_GET;
 			unset( $params['woo-shipstation-api'] );
@@ -48,7 +48,7 @@ class WC_ShipStation_Handler {
 
 
 		//no options?
-		if ( !get_option( 'woo_ss_username' ) || !get_option( 'woo_ss_password' ) )
+		if ( !get_option( 'woo_sf_username' ) || !get_option( 'woo_sf_password' ) )
 			$this->die_log( __( "Please, setup username & password to access xml", $this->domain ) );
 
 		//action missed or wrong?
@@ -93,14 +93,14 @@ class WC_ShipStation_Handler {
 		//scan options twice!
 		$export_order_statuses = array();
 		foreach ( $this->order_statuses as $status ) {
-			if ( get_option( 'woo_ss_export_status_' . md5( $status ) ) == "yes" )
+			if ( get_option( 'woo_sf_export_status_' . md5( $status ) ) == "yes" )
 				$export_order_statuses[] = $status;
 		}
 
 		$shipping_methods = $woocommerce->shipping->load_shipping_methods();
 		$export_shipping_methods = array();
 		foreach ( $shipping_methods as $method ) {
-			if ( get_option( 'woo_ss_export_shipping_' . $method->id ) == "yes" )
+			if ( get_option( 'woo_sf_export_shipping_' . $method->id ) == "yes" )
 				$export_shipping_methods[] = $method->id;
 		}
 
@@ -119,7 +119,7 @@ class WC_ShipStation_Handler {
 			$wu = "Pounds";
 		}
 
-		$system_notes = explode( "\n", get_option( 'woo_ss_export_system_notes' ) );
+		$system_notes = explode( "\n", get_option( 'woo_sf_export_system_notes' ) );
 		$system_notes = array_filter ( array_map( "trim", $system_notes ) );
 
 		// we will search for private notes
@@ -128,7 +128,7 @@ class WC_ShipStation_Handler {
 		$xml = new SimpleXMLElement( "<Orders></Orders>" );
 
 		// may 2013
-		$page_size = get_option( 'woo_ss_export_pagesize' );
+		$page_size = get_option( 'woo_sf_export_pagesize' );
 		if( !$page_size )
 			$page_size = 100;
 		$page_num = isset($_GET['page']) ? intval( $_GET['page'] ) : 0;
@@ -158,7 +158,7 @@ class WC_ShipStation_Handler {
 		}
 
 		// July 2013 : export Coupon
-		$export_coupon_position = get_option( 'woo_ss_export_coupon_position' );
+		$export_coupon_position = get_option( 'woo_sf_export_coupon_position' );
 		if( !$export_coupon_position )
 			$export_coupon_position = "CustomField1";
 
@@ -348,7 +348,7 @@ class WC_ShipStation_Handler {
 		// is number!
 		$orderid = $order->id;
 		
-		$import_status = $this->get_status_by_id( get_option( 'woo_ss_import_status' ) );
+		$import_status = $this->get_status_by_id( get_option( 'woo_sf_import_status' ) );
 
 		$ship_ts = time() + get_option( 'gmt_offset' ) * 3600; //current time
 
