@@ -507,8 +507,9 @@ class WC_Fulfillment {
 		$open_orders = $this->update_orders();
 		foreach($orders->posts as $order) {
 			// already in fulfillment, but never got updated
-			if ( in_array($order->ID, array_values($open_orders)) ) {
+			if ( in_array($order->ID, array_keys($open_orders)) ) {
 				update_post_meta($order->ID, 'woo_sf_order_id', $open_orders[$order->ID]);
+				$order = new WC_Order($order->ID);
 				$order->update_status($this->complete_status->slug);
 				continue;
 			}
