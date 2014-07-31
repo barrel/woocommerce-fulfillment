@@ -46,6 +46,7 @@ function woo_sf_plugin_activate() {
 
 class WC_Fulfillment {
 	public $domain;
+	public $shop_taxonomy = 'shop_order_status';
 
 	/**
 	 * Constructor: Filters and Actions.
@@ -122,10 +123,10 @@ class WC_Fulfillment {
 		$this->url = home_url( '/' ) . 'woo-fulfillment-api';
 
 		// Order Statuses
-		$order_statuses = get_terms( "shop_order_status", "hide_empty=0" );
+		$order_statuses = get_terms( $this->shop_taxonomy, "hide_empty=0" );
 		$this->order_statuses = array();
 		foreach ( $order_statuses as $status ) {
-			$this->order_statuses[] = $status->name;
+			$this->order_statuses[$status->term_id] = $status->name;
 		}
 
 		// Shipping Methods
@@ -322,7 +323,7 @@ class WC_Fulfillment {
 		// add fulfillment order number and mark as completed
 		if ( $fulfilled && @$fulfilled->OrderSubmitResult === 0 && @$fulfilled->OrderNumber > 0 ) {
 			update_post_meta($order_id, 'woo_sf_order_id', $fulfilled->OrderNumber);
-			$order->update_status(get_option('woo_sf_import_status', 'completed'));
+			$order->update_status($this->complete_status->slug);
 		}
 	}
 	
@@ -330,9 +331,10 @@ class WC_Fulfillment {
 	 * Update completed orders with fulfillment status.
 	 *
 	 * @param	(int) $order_id
-	 * @return	void
+	 * @return	array (of integers)
 	**/
 	public function update_orders() {
+		$open_orders = array();
 		$request = array(
 			"startDate" => '2013-1-1', // TODO: get date of oldest order without updates
 			"endDate"   => date('Y-m-d'),
@@ -341,11 +343,13 @@ class WC_Fulfillment {
 		$orders = $orderHistoryResponse->Orders;
 		foreach ($orders as $order) {
 			if ( !empty($order->ThirdPartyOrderNumber)) {
-				$order_id = $order->$order->ThirdPartyOrderNumber;
+				$order_id = $order->ThirdPartyOrderNumber;
+				$open_orders[$order_id] = $order->OrderNumber;
 				$shipments = $order->Shipments;
 				// TODO: Add order note and update shipment info
 			}
 		}
+		return $open_orders;
 	}
 
 	/**
@@ -358,6 +362,8 @@ class WC_Fulfillment {
 		$ch = curl_init();
 		$options = $overrides + array(
 			CURLOPT_AUTOREFERER    => 1,
+			CURLOPT_TIMEOUT        => 3,
+			CURLOPT_CONNECTTIMEOUT => 60,
 			CURLOPT_HEADER         => 0,
 			CURLOPT_RETURNTRANSFER => 1,
 			CURLOPT_FOLLOWLOCATION => TRUE
@@ -371,7 +377,7 @@ class WC_Fulfillment {
 			return $result;
 		} else {
 			if (WP_DEBUG === TRUE) {
-				wp_die( $data );
+				wp_die( $data, basename($options[CURLOPT_URL]) );
 			} else {
 				return false;
 			}
@@ -408,13 +414,21 @@ class WC_Fulfillment {
 		}
 		$data = array(
 			"Username" => get_option('woo_sf_username'),
-			"Password" => get_option('woo_sf_password')
+			"Password" => get_option('woo_sf_password'),
 		) + $data;
-		return $this->api_init(array(
-			CURLOPT_URL        => $this->api_url($end),
-			CURLOPT_POST       => count($data),
-			CURLOPT_POSTFIELDS => http_build_query($data),
-		));
+		$args = array( CURLOPT_URL => $this->api_url($end) );
+		$query_args = http_build_query($data);
+
+		// GET or POST request
+		if ($type == 'update') {
+			$args[CURLOPT_URL] .= '?'.$query_args;
+		} else {
+			$args = array(
+				CURLOPT_POST       => count($data),
+				CURLOPT_POSTFIELDS => $query_args,
+			) + $args;
+		}
+		return $this->api_init($args);
 	}
 
 	/**
@@ -462,6 +476,7 @@ class WC_Fulfillment {
 	 * @return	void
 	**/
 	public function cron_setup_schedule() {
+		$this->complete_status = get_term_by('id', get_option('woo_sf_import_status'), $this->shop_taxonomy);
 		if ( ! wp_next_scheduled( 'woo_sf_cron_repeat_event' ) ) {
 			$start = strtotime("Today 12 PM");
 			wp_schedule_event( $start, 'hourly', 'woo_sf_cron_repeat_event'); 
@@ -476,25 +491,30 @@ class WC_Fulfillment {
 	 * @return	void
 	**/
 	public function cron_process_all(){
-		$shop_taxonomy = 'shop_order_status';
-		$processing = get_term_by('slug', 'processing', $shop_taxonomy);
+		$processing = get_term_by('slug', 'processing', $this->shop_taxonomy);
 		$orders = new WP_Query(array(
 			'post_type'      => 'shop_order',
 			'post_status'    => 'publish',
 			'posts_per_page' => -1,
 			'tax_query'      => array(
 				array(
-					'taxonomy' => $shop_taxonomy,
+					'taxonomy' => $this->shop_taxonomy,
 					'terms'    => $processing->term_id,
 					'operator' => 'IN'
 				)
 			)
 		));
+		$open_orders = $this->update_orders();
 		foreach($orders->posts as $order) {
-			if ( $order->ID < 1433) continue; // TODO: remove after testing
+			// already in fulfillment, but never got updated
+			if ( in_array($order->ID, array_values($open_orders)) ) {
+				update_post_meta($order->ID, 'woo_sf_order_id', $open_orders[$order->ID]);
+				$order->update_status($this->complete_status->slug);
+				continue;
+			}
+			if ( $order->ID < 1433 || $order->ID == 1438) continue; // TODO: remove after testing
 			$this->process_order($order->ID);
 		}
-		$this->update_orders();
 	}
 
 }
