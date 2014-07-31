@@ -15,34 +15,13 @@ Text Domain: woo-fulfillment
 if ( ! function_exists( 'woothemes_queue_update' ) )
 	require_once( 'woo-includes/woo-functions.php' );
 
-// TODO: determine if below is needed
 /**
  * Plugin updates
  */
-woothemes_queue_update( plugin_basename( __FILE__ ), '9de8640767ba64237808ed7f245a49bb', '18734' );
+//woothemes_queue_update( plugin_basename( __FILE__ ), '9de8640767ba64237808ed7f245a49bb', '18734' );
 
-// we CAN'T use "wc-api". SS uses next format to call url: [Your XML Endpoint]?action=export&start_date=[Start Date]&end_date=[End Date]&page=1
-// we keep access via hook
-add_action( "parse_request", "woo_sf_parse_request" );
-function woo_sf_parse_request( &$wp ) {
-	if ( $wp->request == "woo-fulfillment-api" ) {
-		include_once dirname( __FILE__ ) . "/handler.php";
-		$hander = new WC_Fulfillment_Handler();
-		die();
-	}
-}
-
-
-// July 2013: add custom fields
 register_activation_hook( __FILE__, 'woo_sf_plugin_activate' );
-function woo_sf_plugin_activate() {
-	global $wpdb;
-	
-	$wpdb->insert( $wpdb->postmeta, array( 'meta_key' => 'custom_field_Fulfillment_1' ) );
-	$wpdb->insert( $wpdb->postmeta, array( 'meta_key' => 'custom_field_Fulfillment_2' ) );
-	$wpdb->insert( $wpdb->postmeta, array( 'meta_key' => 'custom_field_Fulfillment_3' ) );
-}
-// TODO: review above this
+function woo_sf_plugin_activate() {}
 
 class WC_Fulfillment {
 	public $domain;
