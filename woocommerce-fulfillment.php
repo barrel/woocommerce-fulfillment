@@ -64,7 +64,7 @@ class WC_Fulfillment {
 		add_action( 'woocommerce_update_options_woo_sf', array( &$this, 'save_settings' ), 10 );
 		add_action( 'woocommerce_payment_complete', array(&$this, 'process_order'), 10 );
 
-		add_action( 'init', array(&$this, 'cron_setup_schedule') );
+		add_action( 'admin_init', array(&$this, 'cron_setup_schedule') );
 		add_filter( 'cron_schedules', array(&$this, 'cron_add_interval') );
 		add_action( 'woo_sf_cron_repeat_event', array(&$this, 'cron_process_all') );
 		add_filter( 'woo_sf_filter_country', array(&$this, 'convert_country_codes'));
@@ -266,6 +266,7 @@ class WC_Fulfillment {
 	public function process_order($order_id) {
 		$order = new WC_Order($order_id);
 		$order_details = array();
+		$order_results_codes = array(0,3);
 		
 		$shipping_name = '';
 		if ( !empty($order->shipping_first_name)) $shipping_name .= $order->shipping_first_name;
@@ -289,14 +290,12 @@ class WC_Fulfillment {
 				"Freight"        => 0,
 			);
 		}
+		// can't submit anything without details
+		if (empty($order_details)) return;
 
 		$order_array = array(
 			"Order"    => array(
 				"OrderDate"            => $order->order_date,
-				"Freight"              => $order->order_shipping,
-				"SalesTax"             => $order->order_tax,
-				"DiscountType"         => 1,
-				"DiscountAmount"       => $order->order_discount,
 				"ReferenceOrderNumber" => $order_id,
 				/*
 				"MiscCharges"          => '',
@@ -306,7 +305,6 @@ class WC_Fulfillment {
 					"Description"  => $shipping_name,
 					"AttnContact"  => $shipping_name,
 					"Line1"        => $order->shipping_address_1,
-					"Line2"        => $order->shipping_address_2,
 					"City"         => $order->shipping_city,
 					"State"        => $order->shipping_state,
 					"Zip"          => $order->shipping_postcode,
@@ -317,11 +315,18 @@ class WC_Fulfillment {
 				"OrderDetails" => $order_details,
 			)
 		);
+		
+		if (!empty($order->order_shipping)) $order_array["Order"]["Freight"] = $order->order_shipping;
+		if (!empty($order->order_tax)) $order_array["Order"]["SalesTax"] = $order->order_tax;
+		if (!empty($order->order_discount)) $order_array["Order"]["DiscountType"] = 1;
+		if (!empty($order->order_discount)) $order_array["Order"]["DiscountAmount"] = $order->order_discount;
+		if (!empty($order->shipping_address_2)) $order_array["Order"]["Address"]["Line2"] = $order->shipping_address_2;
 
 		$fulfilled = $this->api('submit', $order_array);
 
-		// add fulfillment order number and mark as completed
-		if ( $fulfilled && @$fulfilled->OrderSubmitResult === 0 && @$fulfilled->OrderNumber > 0 ) {
+		// update newly created orders or existing orders that haven't been marked as completed
+		if ( $fulfilled && in_array($fulfilled->OrderSubmitResult, $order_results_codes) && $fulfilled->OrderNumber > 0) {
+			// add fulfillment order number and mark as completed
 			update_post_meta($order_id, 'woo_sf_order_id', $fulfilled->OrderNumber);
 			$order->update_status($this->complete_status->slug);
 		}
@@ -339,14 +344,32 @@ class WC_Fulfillment {
 			"startDate" => '2013-1-1', // TODO: get date of oldest order without updates
 			"endDate"   => date('Y-m-d'),
 		);
-		$orderHistoryResponse = $this->api('update', $request);
-		$orders = $orderHistoryResponse->Orders;
-		foreach ($orders as $order) {
-			if ( !empty($order->ThirdPartyOrderNumber)) {
-				$order_id = $order->ThirdPartyOrderNumber;
-				$open_orders[$order_id] = $order->OrderNumber;
-				$shipments = $order->Shipments;
-				// TODO: Add order note and update shipment info
+		$response = $this->api('update', $request);
+		if ( $response && !empty($response->Orders)) {
+			foreach($response->Orders as $order) {
+				if ( !empty($order->ThirdPartyOrderNumber)) {
+					$order_id = $order->ThirdPartyOrderNumber;
+					$open_orders[$order_id] = $order->OrderNumber;
+					foreach($order->Shipments as $shipment) {
+						$provider = @$shipment->ServiceProvider;
+						$date_shipped = @$shipment->ShipDate;
+						$tracking_no = @$shipment->TrackingNumber;
+						
+						if ( is_plugin_active( "wooshippinginfo/wootrackinfo.php" ) ) {
+							update_post_meta( $order_id, '_order_custtrackurl', '' );
+							update_post_meta( $order_id, '_order_custcompname', '' );
+							update_post_meta( $order_id, '_order_trackno', $tracking_no );
+							update_post_meta( $order_id, '_order_trackurl', $provider );
+						}
+
+						// add extra if Plugin 'Shipment Tracking for WooCommerce' detected
+						if ( is_plugin_active( "woocommerce-shipment-tracking/shipment-tracking.php" ) ) {
+							update_post_meta( $order_id, '_tracking_provider', $provider );
+							update_post_meta( $order_id, '_tracking_number', $tracking_no );
+							update_post_meta( $order_id, '_date_shipped', strtotime($date_shipped) );
+						}
+					}
+				}
 			}
 		}
 		return $open_orders;
@@ -373,11 +396,34 @@ class WC_Fulfillment {
 		curl_close($ch);
 		$result = @json_decode($data);
 
-		if ($result) {
+		if ($result && $result->ServiceResult === 0) {
 			return $result;
 		} else {
 			if (WP_DEBUG === TRUE) {
-				wp_die( $data, basename($options[CURLOPT_URL]) );
+				// Service Error
+				switch(@$result->ServiceResult){
+					case 1: $title="General_Failure";break;
+					case 2: $title="Invalid_Token";break;
+					case 3: $title="Invalid_API_Key";break;
+					case 4: $title="Validation_Error";break;
+					default: $title="Unknown";
+				}
+				
+				// Get submitted data
+				$url_parts = explode('?', $options[CURLOPT_URL]);
+				$detail = (isset($options[CURLOPT_POSTFIELDS])
+					? $options[CURLOPT_POSTFIELDS] : array_pop( $url_parts )
+				);
+				$details = explode('&', urldecode($detail));
+				$submitted = is_array($details) ? implode('<br/>', $details): false;
+				
+				// show response as json or raw data
+				if ($result) $data = sprintf("<pre>%s</pre>", print_r($result, true));
+				
+				// append submitted data to message
+				if ($submitted) $data .= $submitted;
+				$title .= ": ".basename($options[CURLOPT_URL]);
+				wp_die( $data, $title );
 			} else {
 				return false;
 			}
@@ -506,14 +552,6 @@ class WC_Fulfillment {
 		));
 		$open_orders = $this->update_orders();
 		foreach($orders->posts as $order) {
-			// already in fulfillment, but never got updated
-			if ( in_array($order->ID, array_keys($open_orders)) ) {
-				update_post_meta($order->ID, 'woo_sf_order_id', $open_orders[$order->ID]);
-				$order = new WC_Order($order->ID);
-				$order->update_status($this->complete_status->slug);
-				continue;
-			}
-			if ( $order->ID < 1433 || $order->ID == 1438) continue; // TODO: remove after testing
 			$this->process_order($order->ID);
 		}
 	}
