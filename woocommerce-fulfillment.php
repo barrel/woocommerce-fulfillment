@@ -290,8 +290,6 @@ class WC_Fulfillment {
 		}
 
 		$order_array = array(
-			"Username" => get_option('woo_sf_username'),
-			"Password" => get_option('woo_sf_password'),
 			"Order"    => array(
 				"OrderDate"            => $order->order_date,
 				"Freight"              => $order->order_shipping,
@@ -321,9 +319,10 @@ class WC_Fulfillment {
 
 		$fulfilled = $this->api('submit', $order_array);
 
-		if ( $fulfilled && $fulfilled->OrderSubmitResult === 0 && is_numeric($fulfilled->OrderNumber) ) {
+		// add fulfillment order number and mark as completed
+		if ( $fulfilled && @$fulfilled->OrderSubmitResult === 0 && @$fulfilled->OrderNumber > 0 ) {
 			update_post_meta($order_id, 'woo_sf_order_id', $fulfilled->OrderNumber);
-			$order->update_status('completed');
+			$order->update_status(get_option('woo_sf_import_status', 'completed'));
 		}
 	}
 	
@@ -335,8 +334,6 @@ class WC_Fulfillment {
 	**/
 	public function update_orders() {
 		$request = array(
-			"Username"  => get_option('woo_sf_username'),
-			"Password"  => get_option('woo_sf_password'),
 			"startDate" => '2013-1-1', // TODO: get date of oldest order without updates
 			"endDate"   => date('Y-m-d'),
 		);
@@ -409,6 +406,10 @@ class WC_Fulfillment {
 			case 'update': $end = "GetOrderHistory"; break;
 			default: return false;
 		}
+		$data = array(
+			"Username" => get_option('woo_sf_username'),
+			"Password" => get_option('woo_sf_password')
+		) + $data;
 		return $this->api_init(array(
 			CURLOPT_URL        => $this->api_url($end),
 			CURLOPT_POST       => count($data),
@@ -447,7 +448,7 @@ class WC_Fulfillment {
 	 * @param	(array) $schedules
 	 * @return	array
 	**/
-	function cron_add_interval( $schedules ) {
+	public function cron_add_interval( $schedules ) {
 		$schedules['hourly'] = array(
 			'interval' => 3600, 
 			'display' => __( 'Once Hourly' )
@@ -460,7 +461,7 @@ class WC_Fulfillment {
 	 *
 	 * @return	void
 	**/
-	function cron_setup_schedule() {
+	public function cron_setup_schedule() {
 		if ( ! wp_next_scheduled( 'woo_sf_cron_repeat_event' ) ) {
 			$start = strtotime("Today 12 PM");
 			wp_schedule_event( $start, 'hourly', 'woo_sf_cron_repeat_event'); 
@@ -474,7 +475,7 @@ class WC_Fulfillment {
 	 *
 	 * @return	void
 	**/
-	function cron_process_all(){
+	public function cron_process_all(){
 		$shop_taxonomy = 'shop_order_status';
 		$processing = get_term_by('slug', 'processing', $shop_taxonomy);
 		$orders = new WP_Query(array(
@@ -489,7 +490,10 @@ class WC_Fulfillment {
 				)
 			)
 		));
-		foreach($orders->posts as $order) $this->process_order($order->ID);
+		foreach($orders->posts as $order) {
+			if ( $order->ID < 1433) continue; // TODO: remove after testing
+			$this->process_order($order->ID);
+		}
 		$this->update_orders();
 	}
 
