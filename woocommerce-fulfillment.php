@@ -47,6 +47,9 @@ class WC_Fulfillment {
 		add_filter( 'cron_schedules', array(&$this, 'cron_add_interval') );
 		add_action( 'woo_sf_cron_repeat_event', array(&$this, 'cron_process_all') );
 		add_filter( 'woo_sf_filter_country', array(&$this, 'convert_country_codes'));
+		
+		if ( is_admin() && current_user_can('administrator') && !empty($_GET['cron']))
+			$this->cron_process_all();
 	}
 	
 	/**
@@ -341,13 +344,21 @@ class WC_Fulfillment {
 	**/
 	public function update_orders() {
 		$open_orders = array();
+		/** 
+		 * @startDate - TODO: get date of oldest order without updates
+		 * @endDate - today is not inclusive and future scope is ok 
+		**/
 		$request = array(
-			"startDate" => '2013-1-1', // TODO: get date of oldest order without updates
-			"endDate"   => date('Y-m-d'),
+			"startDate" => '2013-1-1', 
+			"endDate"   => date('Y-m-d', strtotime('tomorrow')), 
 		);
 		$response = $this->api('update', $request);
 		if ( $response && !empty($response->Orders)) {
 			foreach($response->Orders as $order) {
+				// nothing shipped yet
+				if ( $order->OrderDetailShippedCount === 0 ) continue;
+
+				// shipped and has woocommerce order number
 				if ( !empty($order->ThirdPartyOrderNumber)) {
 					$order_id = $order->ThirdPartyOrderNumber;
 					$open_orders[$order_id] = $order->OrderNumber;
