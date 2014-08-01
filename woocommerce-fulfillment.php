@@ -18,10 +18,7 @@ if ( ! function_exists( 'woothemes_queue_update' ) )
 /**
  * Plugin updates
  */
-//woothemes_queue_update( plugin_basename( __FILE__ ), '9de8640767ba64237808ed7f245a49bb', '18734' );
-
-register_activation_hook( __FILE__, 'woo_sf_plugin_activate' );
-function woo_sf_plugin_activate() {}
+//woothemes_queue_update( plugin_basename( __FILE__ ), '', '' );
 
 class WC_Fulfillment {
 	public $domain;
@@ -32,11 +29,13 @@ class WC_Fulfillment {
 	 * @return	void
 	**/
 	public function __construct() {
-
 		$this->domain = 'woo-fulfillment';
 		$this->current_tab = ( isset( $_GET['tab'] ) ) ? $_GET['tab'] : 'general';
 
 		load_plugin_textdomain( $this->domain, false, basename( dirname( __FILE__ ) ) . '/languages' );
+
+		if ( function_exists( 'register_activation_hook' ) )
+			register_activation_hook( __FILE__, array(&$this, 'activate') );
 
 		add_action( 'woocommerce_settings_tabs', array( &$this, 'add_settings_tab' ), 10 );
 		add_action( 'woocommerce_settings_tabs_woo_sf', array( &$this, 'settings_tab_action' ), 10 );
@@ -47,12 +46,10 @@ class WC_Fulfillment {
 		add_filter( 'cron_schedules', array(&$this, 'cron_add_interval') );
 		add_action( 'woo_sf_cron_repeat_event', array(&$this, 'cron_process_all') );
 		add_filter( 'woo_sf_filter_country', array(&$this, 'convert_country_codes'));
-		
-		if ( is_admin() && isset($_GET['cron']) ) {
-			add_action( 'admin_init', array(&$this, 'cron_process_all'), 15 );
-		}
 	}
 	
+	function activate(){}
+
 	/**
 	 * Output settings tab.
 	 *
@@ -98,7 +95,7 @@ class WC_Fulfillment {
 
 		// Fulfillment API URL
 		$this->url = home_url( '/' ) . 'woo-fulfillment-api';
-		
+	
 		// Order Statuses
 		$order_statuses = get_terms( $this->shop_taxonomy, "hide_empty=0" );
 		$this->order_statuses = array();
@@ -193,7 +190,7 @@ class WC_Fulfillment {
 				'id' => 'settings' 
 			),
 		);
-		
+	
 		$endpoint = array( 'SubmitOrder', 'GetOrderHistory');
 		foreach ( $endpoint as $idx => $end ) {
 			$endpoint[$idx] = sprintf(
@@ -201,33 +198,38 @@ class WC_Fulfillment {
 				str_replace($end, sprintf('<b>%s</b>', $end), $this->api_url($end)) 
 			);
 		}
-		
+	
 		$inline_message = '<div class="%s update-nag"><p><b>%s</b></p></div>';
 		$r = $this->api_ready();
 		$class = $r ? 'updated':'error';
 		$stati = $r ? 'API Configured' : 'Check Configuration';
 		$api_config = sprintf($inline_message, $class, $stati);
-		
+	
 		$r = !$r ? false : $this->api('update', array(
 			"startDate" => date('Y-m-d', strtotime('yesterday')),
 			"endDate" => date('Y-m-d'),
 		));
-		
+	
 		$r = @$r->ServiceResult === 0;
 		$class = $r ? 'updated':'error';
 		$stati = $r ? 'API Ready' : 'Service Error';
 		$api_status = sprintf($inline_message, $class, $stati);
+		
+		$manual = sprintf(
+			'<p>%s</p>', 
+			__('Bulk handle orders marked "processing" to fulfillment and update completed orders with shipping details.')
+		);
 
 		$form_fields = array_merge( $form_fields, array(
 			array(
 				'name' => __( 'API Status', $this->domain ),
 				'type' => 'title',
 				'desc' => $api_config.$api_status,
-				'id' => 'endpoint' 
+				'id' => 'status' 
 			),
 			array( 
 				'type' => 'sectionend', 
-				'id' => 'endpoint' 
+				'id' => 'status' 
 			),
 			array(	
 				'name' => __( 'Registered Endpoints', $this->domain ),
@@ -235,12 +237,20 @@ class WC_Fulfillment {
 				'desc' => implode('<br/>', $endpoint),
 				'id' => 'endpoint' 
 			),
+			array(	
+				'name' => __( 'Manual Fulfillment', $this->domain ),
+				'type' => 'title',
+			'desc' => sprintf('%s<p><a class="button" href="%s">Process &rarr;</a></p>', 
+					$manual,
+					admin_url('admin.php?page=woocommerce&tab=woo_sf&cron='.wp_create_nonce( 'cron' ))),
+				'id' => 'process' 
+			),
 			array( 
 				'type' => 'sectionend', 
 				'id' => 'endpoint' 
 			),
 		));
-		
+
 		return $form_fields;
 	}
 
@@ -272,16 +282,16 @@ class WC_Fulfillment {
 		$order = new WC_Order($order_id);
 		$order_details = array();
 		$order_results_codes = array(0,3);
-		
+	
 		$shipping_name = '';
 		if ( !empty($order->shipping_first_name)) $shipping_name .= $order->shipping_first_name;
 		else $shipping_name .= $order->billing_first_name;
-		
+	
 		if ( !empty($order->shipping_last_name)) $shipping_name .= " ".$order->shipping_last_name;
 		else $shipping_name .= " ".$order->billing_last_name;
-		
+	
 		$order_items = $order->get_items();
-		
+	
 		foreach( $order_items as $item_id => $item ) {
 			/**
 			 * NOTE: CA Short ERP does not support flat discount per item;
@@ -320,7 +330,7 @@ class WC_Fulfillment {
 				"OrderDetails" => $order_details,
 			)
 		);
-		
+	
 		if (!empty($order->order_shipping)) $order_array["Order"]["Freight"] = $order->order_shipping;
 		if (!empty($order->order_tax)) $order_array["Order"]["SalesTax"] = $order->order_tax;
 		if (!empty($order->order_discount)) $order_array["Order"]["DiscountType"] = 1;
@@ -334,9 +344,10 @@ class WC_Fulfillment {
 			// add fulfillment order number and mark as completed
 			update_post_meta($order_id, 'woo_sf_order_id', $fulfilled->OrderNumber);
 			$order->update_status($this->complete_status->slug);
+			return $order_id;
 		}
 	}
-	
+
 	/**
 	 * Update completed orders with fulfillment status.
 	 *
@@ -367,7 +378,7 @@ class WC_Fulfillment {
 						$provider = @$shipment->ServiceProvider;
 						$date_shipped = @$shipment->ShipDate;
 						$tracking_no = @$shipment->TrackingNumber;
-						
+					
 						// add extra if Plugin 'Shipment Tracking for WooCommerce' detected
 						if ( is_plugin_active( "woocommerce-shipment-tracking/shipment-tracking.php" ) ) {
 							update_post_meta( $order_id, '_tracking_provider', $provider );
@@ -380,7 +391,7 @@ class WC_Fulfillment {
 		}
 		return $open_orders;
 	}
-	
+
 	/**
 	 * Check if required configuration is set for API to work.
 	 *
@@ -418,7 +429,7 @@ class WC_Fulfillment {
 		if ($result && @$result->ServiceResult === 0) {
 			return $result;
 		} else {
-			if (WP_DEBUG === TRUE) {
+			if (WP_DEBUG === TRUE && !is_admin()) {
 				// Service Error
 				switch(@$result->ServiceResult){
 					case 1: $title="General_Failure";break;
@@ -427,7 +438,7 @@ class WC_Fulfillment {
 					case 4: $title="Validation_Error";break;
 					default: $title="Unknown";
 				}
-				
+			
 				// Get submitted data
 				$url_parts = explode('?', $options[CURLOPT_URL]);
 				$detail = (isset($options[CURLOPT_POSTFIELDS])
@@ -435,11 +446,11 @@ class WC_Fulfillment {
 				);
 				$details = explode('&', urldecode($detail));
 				$submitted = is_array($details) ? implode('<br/>', $details): false;
-				
+			
 				// show response as json or raw data
 				if (!empty($result->Message)) $data = sprintf('<div class="error"><p>%s</p></div>', $result->Message);
 				elseif ($result) $data = sprintf('<pre class="update-nag">%s</pre>', print_r($result, true));
-				
+			
 				// append submitted data to message
 				if ($submitted) $data .= sprintf('<p class="update-nag">%s</p>', $submitted);
 				$title .= ": ".basename($options[CURLOPT_URL]);
@@ -449,7 +460,7 @@ class WC_Fulfillment {
 			}
 		}
 	}
-	
+
 	/**
 	 * Obtain the fully-qualified API URL from settings.
 	 *
@@ -464,7 +475,7 @@ class WC_Fulfillment {
 		);
 		return implode('/', array_map(array(&$this, 'xtrim'), $url));
 	}
-	
+
 	/**
 	 * Perform an API call for fulfillment.
 	 *
@@ -506,7 +517,7 @@ class WC_Fulfillment {
 	public function xtrim ($in){
 		return trim($in, "/");
 	}
-	
+
 	/**
 	 * Filter to convert country codes from 2 to 3-digit format.
 	 * NOTE: CA Short ERP only supports 3-digit country codes.
@@ -545,6 +556,11 @@ class WC_Fulfillment {
 		$term_id = get_option('woo_sf_import_status', 'completed');
 		$term_by = $term_id === 'completed' ? 'slug' : 'id';
 		$this->complete_status = get_term_by($term_by, $term_id, $this->shop_taxonomy);
+		
+		if ( !empty($_GET['cron']) && wp_verify_nonce( $_GET['cron'], 'cron' ) ) {
+			$this->cron_process_all();
+			add_action( 'admin_notices', array(&$this, 'admin_notice') );
+		}
 		if ( !wp_next_scheduled('woo_sf_cron_repeat_event') && $this->api_ready() ) {
 			$start = strtotime("Today 12 PM");
 			wp_schedule_event( $start, 'hourly', 'woo_sf_cron_repeat_event'); 
@@ -578,6 +594,9 @@ class WC_Fulfillment {
 		}
 	}
 
+	public function admin_notice() {
+		echo '<div class="updated"><p>Manual fulfillment complete. <b>Note: This does not indicate success.</b></p></div>';
+	}
 }
 
 $GLOBALS['WC_Fulfillment'] = new WC_Fulfillment();
