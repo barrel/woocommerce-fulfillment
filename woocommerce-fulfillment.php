@@ -203,15 +203,28 @@ class WC_Fulfillment {
 				str_replace($end, sprintf('<b>%s</b>', $end), $this->api_url($end)) 
 			);
 		}
-			
+		
+		$inline_message = '<div class="%s update-nag"><p><b>%s</b></p></div>';
 		$r = $this->api_ready();
 		$class = $r ? 'updated':'error';
-		$stati = $r ? 'Ready' : 'Check Configuration';
+		$stati = $r ? 'API Configured' : 'Check Configuration';
+		$api_config = sprintf($inline_message, $class, $stati);
+		
+		$r = !$r ? false : $this->api('update', array(
+			"startDate" => date('Y-m-d', strtotime('yesterday')),
+			"endDate" => date('Y-m-d'),
+		));
+		
+		$r = @$r->ServiceResult === 0;
+		$class = $r ? 'updated':'error';
+		$stati = $r ? 'API Ready' : 'Service Error';
+		$api_status = sprintf($inline_message, $class, $stati);
+
 		$form_fields = array_merge( $form_fields, array(
 			array(
 				'name' => __( 'API Status', $this->domain ),
 				'type' => 'title',
-				'desc' => sprintf('<div class="%s update-nag"><p><b>%s</b></p></div>', $class, $stati),
+				'desc' => $api_config.$api_status,
 				'id' => 'endpoint' 
 			),
 			array( 
@@ -403,7 +416,7 @@ class WC_Fulfillment {
 		curl_close($ch);
 		$result = @json_decode($data);
 
-		if ($result && $result->ServiceResult === 0) {
+		if ($result && @$result->ServiceResult === 0) {
 			return $result;
 		} else {
 			if (WP_DEBUG === TRUE) {
@@ -425,10 +438,11 @@ class WC_Fulfillment {
 				$submitted = is_array($details) ? implode('<br/>', $details): false;
 				
 				// show response as json or raw data
-				if ($result) $data = sprintf("<pre>%s</pre>", print_r($result, true));
+				if (!empty($result->Message)) $data = sprintf('<div class="error"><p>%s</p></div>', $result->Message);
+				elseif ($result) $data = sprintf('<pre class="update-nag">%s</pre>', print_r($result, true));
 				
 				// append submitted data to message
-				if ($submitted) $data .= $submitted;
+				if ($submitted) $data .= sprintf('<p class="update-nag">%s</p>', $submitted);
 				$title .= ": ".basename($options[CURLOPT_URL]);
 				wp_die( $data, $title );
 			} else {
@@ -459,7 +473,7 @@ class WC_Fulfillment {
 	 * @param	(array) $data
 	 * @return	void
 	**/
-	private function api($type, $data){
+	private function api($type, $data = array()){
 		switch ($type){
 			case 'submit': $end = "SubmitOrder"; break;
 			case 'update': $end = "GetOrderHistory"; break;
@@ -473,7 +487,7 @@ class WC_Fulfillment {
 		$query_args = http_build_query($data);
 
 		// GET or POST request
-		if ($type == 'update') {
+		if ($type !== 'submit') {
 			$args[CURLOPT_URL] .= '?'.$query_args;
 		} else {
 			$args = array(
