@@ -48,8 +48,9 @@ class WC_Fulfillment {
 		add_action( 'woo_sf_cron_repeat_event', array(&$this, 'cron_process_all') );
 		add_filter( 'woo_sf_filter_country', array(&$this, 'convert_country_codes'));
 		
-		if ( is_admin() && current_user_can('administrator') && !empty($_GET['cron']))
-			$this->cron_process_all();
+		if ( is_admin() && isset($_GET['cron']) ) {
+			add_action( 'admin_init', array(&$this, 'cron_process_all'), 15 );
+		}
 	}
 	
 	/**
@@ -541,8 +542,8 @@ class WC_Fulfillment {
 	 * @return	void
 	**/
 	public function cron_setup_schedule() {
-		$term_id = get_option('woo_sf_import_status', 'complete');
-		$term_by = empty($term_id) ? 'slug' : 'id';
+		$term_id = get_option('woo_sf_import_status', 'completed');
+		$term_by = $term_id === 'completed' ? 'slug' : 'id';
 		$this->complete_status = get_term_by($term_by, $term_id, $this->shop_taxonomy);
 		if ( !wp_next_scheduled('woo_sf_cron_repeat_event') && $this->api_ready() ) {
 			$start = strtotime("Today 12 PM");
