@@ -85,13 +85,7 @@ class WC_Fulfillment {
 	public function load_settings() {
 		global $woocommerce;
 
-		$this->shipment_tracking_plugin = $this->ship_details_plugin = "";
-		if ( is_plugin_active( "wooshippinginfo/wootrackinfo.php" ) )
-			$this->ship_details_plugin = sprintf(
-				'<p class="update-nag below-h2" style="margin-top: 0px;">%s</p>',
-				__( "Plugin <b>Shipping Details for WooCommerce</b> detected. Script will update tracking information", $this->domain )
-			);
-
+		$this->shipment_tracking_plugin = "";
 		if ( is_plugin_active( "woocommerce-shipment-tracking/shipment-tracking.php" ) )
 			$this->shipment_tracking_plugin = sprintf(
 				'<p class="update-nag below-h2" style="margin-top: 0px;">%s</p>',
@@ -132,7 +126,7 @@ class WC_Fulfillment {
 			array(	
 				'name' => __( 'Import', $this->domain ),
 				'type' => 'title',
-				'desc' => $this->ship_details_plugin . $this->shipment_tracking_plugin,
+				'desc' => $this->shipment_tracking_plugin,
 				'id' => 'import' 
 			),
 			array(
@@ -362,13 +356,6 @@ class WC_Fulfillment {
 						$date_shipped = @$shipment->ShipDate;
 						$tracking_no = @$shipment->TrackingNumber;
 						
-						if ( is_plugin_active( "wooshippinginfo/wootrackinfo.php" ) ) {
-							update_post_meta( $order_id, '_order_custtrackurl', '' );
-							update_post_meta( $order_id, '_order_custcompname', '' );
-							update_post_meta( $order_id, '_order_trackno', $tracking_no );
-							update_post_meta( $order_id, '_order_trackurl', $provider );
-						}
-
 						// add extra if Plugin 'Shipment Tracking for WooCommerce' detected
 						if ( is_plugin_active( "woocommerce-shipment-tracking/shipment-tracking.php" ) ) {
 							update_post_meta( $order_id, '_tracking_provider', $provider );
