@@ -100,7 +100,7 @@ class WC_Fulfillment {
 
 		// Fulfillment API URL
 		$this->url = home_url( '/' ) . 'woo-fulfillment-api';
-
+		
 		// Order Statuses
 		$order_statuses = get_terms( $this->shop_taxonomy, "hide_empty=0" );
 		$this->order_statuses = array();
@@ -197,13 +197,27 @@ class WC_Fulfillment {
 		);
 		
 		$endpoint = array( 'SubmitOrder', 'GetOrderHistory');
-		foreach ( $endpoint as $idx => $end )
+		foreach ( $endpoint as $idx => $end ) {
 			$endpoint[$idx] = sprintf(
 				'<p class="update-nag" style="margin-top: 0;">%s</p>', 
 				str_replace($end, sprintf('<b>%s</b>', $end), $this->api_url($end)) 
 			);
+		}
 			
+		$r = $this->api_ready();
+		$class = $r ? 'updated':'error';
+		$stati = $r ? 'Ready' : 'Check Configuration';
 		$form_fields = array_merge( $form_fields, array(
+			array(
+				'name' => __( 'API Status', $this->domain ),
+				'type' => 'title',
+				'desc' => sprintf('<div class="%s update-nag"><p><b>%s</b></p></div>', $class, $stati),
+				'id' => 'endpoint' 
+			),
+			array( 
+				'type' => 'sectionend', 
+				'id' => 'endpoint' 
+			),
 			array(	
 				'name' => __( 'Registered Endpoints', $this->domain ),
 				'type' => 'title',
@@ -243,6 +257,7 @@ class WC_Fulfillment {
 	 * @return	void
 	**/
 	public function process_order($order_id) {
+		if ( !$this->api_ready() ) return;
 		$order = new WC_Order($order_id);
 		$order_details = array();
 		$order_results_codes = array(0,3);
@@ -352,6 +367,19 @@ class WC_Fulfillment {
 			}
 		}
 		return $open_orders;
+	}
+	
+	/**
+	 * Check if required configuration is set for API to work.
+	 *
+	 * @return	bool
+	**/
+	private function api_ready() {
+		$option_keys = array( 'woo_sf_api_domain', 'woo_sf_api_url', 'woo_sf_username', 'woo_sf_password');
+		foreach( $option_keys as $option_key )
+			if ( !get_option($option_key) )
+				return false;
+		return true;
 	}
 
 	/**
@@ -501,8 +529,10 @@ class WC_Fulfillment {
 	 * @return	void
 	**/
 	public function cron_setup_schedule() {
-		$this->complete_status = get_term_by('id', get_option('woo_sf_import_status'), $this->shop_taxonomy);
-		if ( ! wp_next_scheduled( 'woo_sf_cron_repeat_event' ) ) {
+		$term_id = get_option('woo_sf_import_status', 'complete');
+		$term_by = empty($term_id) ? 'slug' : 'id';
+		$this->complete_status = get_term_by($term_by, $term_id, $this->shop_taxonomy);
+		if ( !wp_next_scheduled('woo_sf_cron_repeat_event') && $this->api_ready() ) {
 			$start = strtotime("Today 12 PM");
 			wp_schedule_event( $start, 'hourly', 'woo_sf_cron_repeat_event'); 
 		} elseif ( !empty($_GET['clear_cron'])) {
