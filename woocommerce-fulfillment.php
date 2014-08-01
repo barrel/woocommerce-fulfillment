@@ -1,6 +1,6 @@
 <?php
 /*
-Plugin Name: WooCommerce - Fulfillment
+Plugin Name: WooCommerce Fulfillment
 Plugin URI: http://www.woothemes.com/woocommerce/
 Version: 1.0
 Description: Add custom fulfillment support to WooCommerce.
