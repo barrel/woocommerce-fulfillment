@@ -46,6 +46,9 @@ class WC_Fulfillment {
 		add_filter( 'cron_schedules', array(&$this, 'cron_add_interval') );
 		add_action( 'woo_sf_cron_repeat_event', array(&$this, 'cron_process_all') );
 		add_filter( 'woo_sf_filter_country', array(&$this, 'convert_country_codes'));
+		
+		if ($this->current_tab==='woo_sf') 
+			add_action( 'admin_notices', array(&$this, 'admin_notice') );
 	}
 	
 	function activate(){}
@@ -113,11 +116,18 @@ class WC_Fulfillment {
 	 * @return	array
 	**/
 	private function load_form_fields() {
+		$sync_time = __('Never');
+		if ( $_sync_time = get_option('woo_sf_sync_time') ) {
+			$est = new DateTimeZone('America/New_York');
+			$_sync_time = new DateTime(date(DATE_RFC822, $_sync_time));
+			$sync_time = $_sync_time->format('Y-m-d g:i:s a');
+		}
+
 		$form_fields = array(
 			array(	
 				'name' => __( 'Fulfillment plugin for Woocommerce', $this->domain ),
 				'type' => 'title',
-				'desc' => '',
+				'desc' => __('Last sync occurred at: '. sprintf('<b>%s</b>', $sync_time)),
 				'id' => 'about' 
 			),
 			array( 
@@ -202,7 +212,7 @@ class WC_Fulfillment {
 		$inline_message = '<div class="%s update-nag"><p><b>%s</b></p></div>';
 		$r = $this->api_ready();
 		$class = $r ? 'updated':'error';
-		$stati = $r ? 'API Configured' : 'Check Configuration';
+		$stati = __($r ? 'API Configured' : 'Check Configuration');
 		$api_config = sprintf($inline_message, $class, $stati);
 	
 		$r = !$r ? false : $this->api('update', array(
@@ -212,12 +222,17 @@ class WC_Fulfillment {
 	
 		$r = @$r->ServiceResult === 0;
 		$class = $r ? 'updated':'error';
-		$stati = $r ? 'API Ready' : 'Service Error';
+		$stati = __($r ? 'API Ready' : 'Service Error');
 		$api_status = sprintf($inline_message, $class, $stati);
 		
 		$manual = sprintf(
 			'<p>%s</p>', 
 			__('Bulk handle orders marked "processing" to fulfillment and update completed orders with shipping details.')
+		);
+		$desc = sprintf('%s<p><a class="button" href="%s">%s &rarr;</a></p>', 
+			$manual,
+			admin_url('admin.php?page=woocommerce&tab=woo_sf&cron='.wp_create_nonce( 'cron' )),
+			__('Process')
 		);
 
 		$form_fields = array_merge( $form_fields, array(
@@ -240,9 +255,7 @@ class WC_Fulfillment {
 			array(	
 				'name' => __( 'Manual Fulfillment', $this->domain ),
 				'type' => 'title',
-			'desc' => sprintf('%s<p><a class="button" href="%s">Process &rarr;</a></p>', 
-					$manual,
-					admin_url('admin.php?page=woocommerce&tab=woo_sf&cron='.wp_create_nonce( 'cron' ))),
+				'desc' => $desc,
 				'id' => 'process' 
 			),
 			array( 
@@ -278,7 +291,7 @@ class WC_Fulfillment {
 	 * @return	void
 	**/
 	public function process_order($order_id) {
-		if ( !$this->api_ready() ) return;
+		if ( !$this->api_ready() ) return false;
 		$order = new WC_Order($order_id);
 		$order_details = array();
 		$order_results_codes = array(0,3);
@@ -305,8 +318,6 @@ class WC_Fulfillment {
 				"Freight"        => 0,
 			);
 		}
-		// can't submit anything without details
-		if (empty($order_details)) return;
 
 		$order_array = array(
 			"Order"    => array(
@@ -340,12 +351,41 @@ class WC_Fulfillment {
 		$fulfilled = $this->api('submit', $order_array);
 
 		// update newly created orders or existing orders that haven't been marked as completed
-		if ( $fulfilled && in_array($fulfilled->OrderSubmitResult, $order_results_codes) && $fulfilled->OrderNumber > 0) {
+		$service_code = @$fulfilled->ServiceResult;
+		if ( $fulfilled && in_array($fulfilled->OrderSubmitResult, $order_results_codes) && $fulfilled->OrderNumber > 0 && $service_code === 0) {
 			// add fulfillment order number and mark as completed
 			update_post_meta($order_id, 'woo_sf_order_id', $fulfilled->OrderNumber);
 			$order->update_status($this->complete_status->slug);
 			return $order_id;
+		} else {
+			update_post_meta($order_id, 'woo_sf_order_error_code', $service_code );
+			return false;
 		}
+	}
+	
+	/**
+	 * Get all 'processing' orders (with override).
+	 *
+	 * @param	(array) $override - query parameters
+	 * @return	object (WP_Query)
+	**/
+	private function get_orders_with($override = array()){
+		$processing = get_term_by('slug', 'processing', $this->shop_taxonomy);
+		$args = array(
+			'post_type'      => 'shop_order',
+			'post_status'    => 'publish',
+			'posts_per_page' => -1,
+			'tax_query'      => array(
+				array(
+					'taxonomy' => $this->shop_taxonomy,
+					'terms'    => $processing->term_id,
+					'operator' => 'IN'
+				)
+			),
+		);
+		$args = array_merge($args, $override);
+		$orders = new WP_Query($args);
+		return $orders;
 	}
 
 	/**
@@ -357,11 +397,39 @@ class WC_Fulfillment {
 	public function update_orders() {
 		$open_orders = array();
 		/** 
-		 * @startDate - TODO: get date of oldest order without updates
+		 * @startDate - oldest completed order with valid fulfillment and without tracking
 		 * @endDate - today is not inclusive and future scope is ok 
 		**/
+		
+		$completed = get_term_by('slug', 'completed', $this->shop_taxonomy);
+		$args = array(
+			'order'          => 'DESC',
+			'tax_query'      => array(
+				array(
+					'taxonomy' => $this->shop_taxonomy,
+					'terms'    => $completed->term_id,
+					'operator' => 'IN'
+				)
+			),
+			'meta_query'     => array(
+				'relation' => 'AND',
+				array(
+					'key'      => 'woo_sf_order_id',
+					'value'    => 0,
+					'compare'  => '>',
+					'type'     => 'NUMERIC',
+				),
+				array(
+					'key' => '_tracking_number',
+					'value' => 'test',
+					'compare' => 'NOT EXISTS'
+				)
+			),
+		);
+		$orders = $this->get_orders_with($args);
+		$start_date = !empty($orders->post) ? date('Y-m-d', strtotime($orders->post->post_date_gmt)) : '2014-01-01';
 		$request = array(
-			"startDate" => '2013-1-1', 
+			"startDate" => $start_date, 
 			"endDate"   => date('Y-m-d', strtotime('tomorrow')), 
 		);
 		$response = $this->api('update', $request);
@@ -425,39 +493,48 @@ class WC_Fulfillment {
 		$data = curl_exec($ch);
 		curl_close($ch);
 		$result = @json_decode($data);
-
+		
 		if ($result && @$result->ServiceResult === 0) {
 			return $result;
-		} else {
-			if (WP_DEBUG === TRUE && !is_admin()) {
-				// Service Error
-				switch(@$result->ServiceResult){
-					case 1: $title="General_Failure";break;
-					case 2: $title="Invalid_Token";break;
-					case 3: $title="Invalid_API_Key";break;
-					case 4: $title="Validation_Error";break;
-					default: $title="Unknown";
-				}
-			
-				// Get submitted data
-				$url_parts = explode('?', $options[CURLOPT_URL]);
-				$detail = (isset($options[CURLOPT_POSTFIELDS])
-					? $options[CURLOPT_POSTFIELDS] : array_pop( $url_parts )
-				);
-				$details = explode('&', urldecode($detail));
-				$submitted = is_array($details) ? implode('<br/>', $details): false;
-			
-				// show response as json or raw data
-				if (!empty($result->Message)) $data = sprintf('<div class="error"><p>%s</p></div>', $result->Message);
-				elseif ($result) $data = sprintf('<pre class="update-nag">%s</pre>', print_r($result, true));
-			
-				// append submitted data to message
-				if ($submitted) $data .= sprintf('<p class="update-nag">%s</p>', $submitted);
-				$title .= ": ".basename($options[CURLOPT_URL]);
-				wp_die( $data, $title );
-			} else {
-				return false;
-			}
+		} elseif ( @$result->ServiceResult > 0 && is_admin() ) {
+			return $result;
+		} elseif (WP_DEBUG === TRUE && !is_admin()) {
+			// Service Error
+			$title = $this->api_get_service_result(@$result->ServiceResult);
+		
+			// Get submitted data
+			$url_parts = explode('?', $options[CURLOPT_URL]);
+			$detail = (isset($options[CURLOPT_POSTFIELDS])
+				? $options[CURLOPT_POSTFIELDS] : array_pop( $url_parts )
+			);
+			$details = explode('&', urldecode($detail));
+			$submitted = is_array($details) ? implode('<br/>', $details): false;
+		
+			// show response as json or raw data
+			if (!empty($result->Message)) $data = sprintf('<div class="error"><p>%s</p></div>', $result->Message);
+			elseif ($result) $data = sprintf('<pre class="update-nag">%s</pre>', print_r($result, true));
+		
+			// append submitted data to message
+			if ($submitted) $data .= sprintf('<p class="update-nag">%s</p>', $submitted);
+			$title .= ": ".basename($options[CURLOPT_URL]);
+			wp_die( $data, $title );
+		}
+	}
+	
+	/**
+	 * Return the service result name.
+	 *
+	 * @param	(int) $code
+	 * @return	string
+	**/
+	private function api_get_service_result($code) {
+		switch($code){
+			case 0: return "Success";break;
+			case 1: return "General_Failure";break;
+			case 2: return "Invalid_Token";break;
+			case 3: return "Invalid_API_Key";break;
+			case 4: return "Validation_Error";break;
+			default: return "Unknown";
 		}
 	}
 
@@ -559,7 +636,9 @@ class WC_Fulfillment {
 		
 		if ( !empty($_GET['cron']) && wp_verify_nonce( $_GET['cron'], 'cron' ) ) {
 			$this->cron_process_all();
-			add_action( 'admin_notices', array(&$this, 'admin_notice') );
+			$sendback = add_query_arg( array( 'page' => 'woocommerce', 'tab' => 'woo_sf', 'notice' => 'updated' ), '' );
+			wp_redirect( $sendback );
+			exit;
 		}
 		if ( !wp_next_scheduled('woo_sf_cron_repeat_event') && $this->api_ready() ) {
 			$start = strtotime("Today 12 PM");
@@ -575,27 +654,55 @@ class WC_Fulfillment {
 	 * @return	void
 	**/
 	public function cron_process_all(){
-		$processing = get_term_by('slug', 'processing', $this->shop_taxonomy);
-		$orders = new WP_Query(array(
-			'post_type'      => 'shop_order',
-			'post_status'    => 'publish',
-			'posts_per_page' => -1,
-			'tax_query'      => array(
-				array(
-					'taxonomy' => $this->shop_taxonomy,
-					'terms'    => $processing->term_id,
-					'operator' => 'IN'
-				)
-			)
-		));
+		$total_processed = 0;
+		$errors = array();
+
+		// update completed orders (has valid fulfillment id without tracking info)
 		$open_orders = $this->update_orders();
+
+		// get all orders in processing
+		$orders = $this->get_orders_with();
 		foreach($orders->posts as $order) {
-			$this->process_order($order->ID);
+			if ( $this->process_order($order->ID) ) {
+				$total_processed += 1;
+			} else {
+				$errors[] = $order->ID;
+			}
 		}
+		update_option('woo_sf_total_sync', count($open_orders));
+		update_option('woo_sf_total_fulfilled', $total_processed);
+		update_option('woo_sf_error_posts', $errors);
+		update_option('woo_sf_sync_time', current_time('timestamp'));
+		return;
 	}
 
+	/**
+	 * Output admin error and update notices.
+	 *
+	 * @return	string
+	**/
 	public function admin_notice() {
-		echo '<div class="updated"><p>Manual fulfillment complete. <b>Note: This does not indicate success.</b></p></div>';
+		$stat_txt = __('Manual fulfillment complete.');
+		$note_txt = __('Note: This does not indicate success.');
+		$total_sync = get_option('woo_sf_total_sync');
+		$total_fulfilled = get_option('woo_sf_total_fulfilled');
+		$error_posts = get_option('woo_sf_error_posts');
+
+		if ( is_array($error_posts) && !empty($error_posts)) {
+			$message = sprintf( __('The following order numbers could not be processed: %s'), implode(', ', $error_posts));
+			printf('<div class="error"><p>%s</p></div>', $message);
+			delete_option( 'woo_sf_error_posts' );
+		}
+		if ( $total_sync ) {
+			$stat_txt .= __(' %s orders updated.');
+			delete_option( 'woo_sf_total_sync' );
+		}
+		if ( $total_fulfilled ) {
+			$stat_txt .= __(' %s orders fulfilled.');
+			delete_option( 'woo_sf_total_fulfilled' );
+		}
+		if ( @$_GET['notice'] === 'updated')
+			printf('<div class="updated"><p>%s <b>%s</b></p></div>', $stat_txt, $note_txt);
 	}
 }
 
