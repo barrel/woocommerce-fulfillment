@@ -22,6 +22,7 @@ if ( ! function_exists( 'woothemes_queue_update' ) )
 
 class WC_Fulfillment {
 	public $domain;
+	public $debug = false;
 	public $shop_taxonomy = 'shop_order_status';
 
 	/**
@@ -352,13 +353,17 @@ class WC_Fulfillment {
 
 		// update newly created orders or existing orders that haven't been marked as completed
 		$service_code = @$fulfilled->ServiceResult;
-		if ( $fulfilled && in_array($fulfilled->OrderSubmitResult, $order_results_codes) && $fulfilled->OrderNumber > 0 && $service_code === 0) {
+		$submit_code = @$fulfilled->OrderSubmitResult;
+		$order_no = @$fulfilled->OrderNumber;
+		if ( is_object($fulfilled) && in_array($submit_code, $order_results_codes) && $order_no > 0 && $service_code === 0) {
 			// add fulfillment order number and mark as completed
-			update_post_meta($order_id, 'woo_sf_order_id', $fulfilled->OrderNumber);
+			update_post_meta($order_id, 'woo_sf_order_id', $order_no);
 			$order->update_status($this->complete_status->slug);
 			return $order_id;
 		} else {
+			if ( empty($service_code) ) $service_code = -1;
 			update_post_meta($order_id, 'woo_sf_order_error_code', $service_code );
+			update_post_meta($order_id, 'woo_sf_order_error_data', $fulfilled );
 			return false;
 		}
 	}
@@ -477,7 +482,7 @@ class WC_Fulfillment {
 	 * Prepare and execute CURL for the API call.
 	 *
 	 * @param	(array) $overrides
-	 * @return	object | bool | void
+	 * @return	object | string
 	**/
 	private function api_init($overrides = array()) {
 		$ch = curl_init();
@@ -494,11 +499,7 @@ class WC_Fulfillment {
 		curl_close($ch);
 		$result = @json_decode($data);
 		
-		if ($result && @$result->ServiceResult === 0) {
-			return $result;
-		} elseif ( @$result->ServiceResult > 0 && is_admin() ) {
-			return $result;
-		} elseif (WP_DEBUG === TRUE && !is_admin()) {
+		if (WP_DEBUG === TRUE && !is_admin() && $this->debug) {
 			// Service Error
 			$title = $this->api_get_service_result(@$result->ServiceResult);
 		
@@ -519,6 +520,7 @@ class WC_Fulfillment {
 			$title .= ": ".basename($options[CURLOPT_URL]);
 			wp_die( $data, $title );
 		}
+		return $result ? $result : @$options[CURLOPT_POSTFIELDS];
 	}
 	
 	/**
