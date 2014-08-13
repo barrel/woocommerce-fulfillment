@@ -509,6 +509,15 @@ class WC_Fulfillment {
 		curl_close($ch);
 		$result = @json_decode($data);
 		
+		// Get submitted data and add to curl info
+		$url_parts = explode('?', $options[CURLOPT_URL]);
+		$detail = (isset($options[CURLOPT_POSTFIELDS])
+			? $options[CURLOPT_POSTFIELDS] : array_pop( $url_parts )
+		);
+		$submitted = array();
+		$details = parse_str(urldecode($detail), $submitted);
+		$info['submitted_data'] = $submitted;
+
 		// effectively disabled FTTB
 		if (WP_DEBUG === TRUE && !is_admin() && $this->debug) {
 			// Service Error
@@ -520,7 +529,7 @@ class WC_Fulfillment {
 				? $options[CURLOPT_POSTFIELDS] : array_pop( $url_parts )
 			);
 			$details = explode('&', urldecode($detail));
-			$submitted = is_array($details) ? implode('<br/>', $details): false;
+			$submitted = !empty($submitted) ? sprintf("<pre>%s</pre>", print_r($submitted, true)) : false;
 		
 			// show response as json or raw data
 			if (!empty($result->Message)) $data = sprintf('<div class="error"><p>%s</p></div>', $result->Message);
