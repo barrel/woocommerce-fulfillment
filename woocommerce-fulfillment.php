@@ -351,17 +351,26 @@ class WC_Fulfillment {
 
 		$fulfilled = $this->api('submit', $order_array);
 
-		// update newly created orders or existing orders that haven't been marked as completed
+		// result details
 		$service_code = @$fulfilled->ServiceResult;
 		$submit_code = @$fulfilled->OrderSubmitResult;
 		$order_no = @$fulfilled->OrderNumber;
+
+		// update newly created orders or existing orders that haven't been marked as completed
 		if ( is_object($fulfilled) && in_array($submit_code, $order_results_codes) && $order_no > 0 && $service_code === 0) {
 			// add fulfillment order number and mark as completed
 			update_post_meta($order_id, 'woo_sf_order_id', $order_no);
 			$order->update_status($this->complete_status->slug);
+
+			// delete error data
+			delete_post_meta($order_id, 'woo_sf_order_error_code');
+			delete_post_meta($order_id, 'woo_sf_order_error_data');
 			return $order_id;
 		} else {
+			// irreconcilable error code
 			if ( empty($service_code) ) $service_code = -1;
+
+			// add error data
 			update_post_meta($order_id, 'woo_sf_order_error_code', $service_code );
 			update_post_meta($order_id, 'woo_sf_order_error_data', $fulfilled );
 			return false;
@@ -482,7 +491,7 @@ class WC_Fulfillment {
 	 * Prepare and execute CURL for the API call.
 	 *
 	 * @param	(array) $overrides
-	 * @return	object | string
+	 * @return	object | array
 	**/
 	private function api_init($overrides = array()) {
 		$ch = curl_init();
@@ -496,9 +505,11 @@ class WC_Fulfillment {
 		);
 		curl_setopt_array($ch, $options);
 		$data = curl_exec($ch);
+		$info = curl_getinfo($ch);
 		curl_close($ch);
 		$result = @json_decode($data);
 		
+		// effectively disabled FTTB
 		if (WP_DEBUG === TRUE && !is_admin() && $this->debug) {
 			// Service Error
 			$title = $this->api_get_service_result(@$result->ServiceResult);
@@ -520,7 +531,7 @@ class WC_Fulfillment {
 			$title .= ": ".basename($options[CURLOPT_URL]);
 			wp_die( $data, $title );
 		}
-		return $result ? $result : @$options[CURLOPT_POSTFIELDS];
+		return $result ? $result : $info;
 	}
 	
 	/**
@@ -544,7 +555,7 @@ class WC_Fulfillment {
 	 * Obtain the fully-qualified API URL from settings.
 	 *
 	 * @param	(string) $endpoint
-	 * @return	void
+	 * @return	string
 	**/
 	private function api_url($endpoint) {
 		$url = array(
@@ -628,6 +639,7 @@ class WC_Fulfillment {
 
 	/**
 	 * Schedule virtual cron job based on interval.
+	 * Also used as a manual trigger for the `cron_process_all()` method.
 	 *
 	 * @return	void
 	**/
@@ -635,13 +647,16 @@ class WC_Fulfillment {
 		$term_id = get_option('woo_sf_import_status', 'completed');
 		$term_by = $term_id === 'completed' ? 'slug' : 'id';
 		$this->complete_status = get_term_by($term_by, $term_id, $this->shop_taxonomy);
-		
+
+		// manually trigger the cron process
 		if ( !empty($_GET['cron']) && wp_verify_nonce( $_GET['cron'], 'cron' ) ) {
 			$this->cron_process_all();
 			$sendback = add_query_arg( array( 'page' => 'woocommerce', 'tab' => 'woo_sf', 'notice' => 'updated' ), '' );
 			wp_redirect( $sendback );
 			exit;
 		}
+
+		// schedule wp virtual cron if not exists
 		if ( !wp_next_scheduled('woo_sf_cron_repeat_event') && $this->api_ready() ) {
 			$start = strtotime("Today 12 PM");
 			wp_schedule_event( $start, 'hourly', 'woo_sf_cron_repeat_event'); 
@@ -671,6 +686,8 @@ class WC_Fulfillment {
 				$errors[] = $order->ID;
 			}
 		}
+
+		// add statistics as db options
 		update_option('woo_sf_total_sync', count($open_orders));
 		update_option('woo_sf_total_fulfilled', $total_processed);
 		update_option('woo_sf_error_posts', $errors);
@@ -691,6 +708,10 @@ class WC_Fulfillment {
 		$error_posts = get_option('woo_sf_error_posts');
 
 		if ( is_array($error_posts) && !empty($error_posts)) {
+			foreach ($error_posts as $key => $error_post_id) {
+				$error_url = admin_url( 'admin.php?page=woocommerce&tab=woo_sf&notice=error&id='.$error_post_id );
+				$error_posts[$key] = sprintf('<a href="%s">%d</a>', $error_url, $error_post_id);
+			}
 			$message = sprintf( __('The following order numbers could not be processed: %s'), implode(', ', $error_posts));
 			printf('<div class="error"><p>%s</p></div>', $message);
 			delete_option( 'woo_sf_error_posts' );
@@ -703,8 +724,16 @@ class WC_Fulfillment {
 			$stat_txt .= __(' %s orders fulfilled.');
 			delete_option( 'woo_sf_total_fulfilled' );
 		}
-		if ( @$_GET['notice'] === 'updated')
+		if ( @$_GET['notice'] === 'error' && is_numeric($_GET['id'])) {
+			$error_code = get_post_meta($_GET['id'], 'woo_sf_order_error_code', true);
+			$error_title = $this->api_get_service_result($error_code);
+			$error_details = get_post_meta($_GET['id'], 'woo_sf_order_error_data', true);
+			$error_details = print_r($error_details, true);
+			printf('<div class="error"><p><b>%s</b></p><pre>%s</pre></div>', $error_title, $error_details);
+		}
+		if ( @$_GET['notice'] === 'updated') {
 			printf('<div class="updated"><p>%s <b>%s</b></p></div>', $stat_txt, $note_txt);
+		}
 	}
 }
 
