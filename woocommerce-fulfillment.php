@@ -517,18 +517,12 @@ class WC_Fulfillment {
 		$submitted = array();
 		$details = parse_str(urldecode($detail), $submitted);
 		$info['submitted_data'] = $submitted;
+		$info['query'] = $detail;
 
 		// effectively disabled FTTB
 		if (WP_DEBUG === TRUE && !is_admin() && $this->debug) {
 			// Service Error
 			$title = $this->api_get_service_result(@$result->ServiceResult);
-		
-			// Get submitted data
-			$url_parts = explode('?', $options[CURLOPT_URL]);
-			$detail = (isset($options[CURLOPT_POSTFIELDS])
-				? $options[CURLOPT_POSTFIELDS] : array_pop( $url_parts )
-			);
-			$details = explode('&', urldecode($detail));
 			$submitted = !empty($submitted) ? sprintf("<pre>%s</pre>", print_r($submitted, true)) : false;
 		
 			// show response as json or raw data
