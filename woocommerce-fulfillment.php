@@ -497,7 +497,7 @@ class WC_Fulfillment {
 		$ch = curl_init();
 		$options = $overrides + array(
 			CURLOPT_AUTOREFERER    => 1,
-			CURLOPT_TIMEOUT        => 3,
+			CURLOPT_TIMEOUT        => 60,
 			CURLOPT_CONNECTTIMEOUT => 60,
 			CURLOPT_HEADER         => 0,
 			CURLOPT_RETURNTRANSFER => 1,
