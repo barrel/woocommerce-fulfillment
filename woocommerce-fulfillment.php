@@ -730,11 +730,11 @@ class WC_Fulfillment {
 			delete_option( 'woo_sf_error_posts' );
 		}
 		if ( $total_sync ) {
-			$stat_txt .= __(' %s orders updated.');
+			$stat_txt .= sprintf(__(' %s orders updated.'), $total_sync);
 			delete_option( 'woo_sf_total_sync' );
 		}
 		if ( $total_fulfilled ) {
-			$stat_txt .= __(' %s orders fulfilled.');
+			$stat_txt .= sprintf(__(' %s orders fulfilled.'), $total_fulfilled);
 			delete_option( 'woo_sf_total_fulfilled' );
 		}
 		if ( @$_GET['notice'] === 'error' && is_numeric($_GET['id'])) {
