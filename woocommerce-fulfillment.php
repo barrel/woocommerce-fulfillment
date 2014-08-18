@@ -417,7 +417,7 @@ class WC_Fulfillment {
 		
 		$completed = get_term_by('slug', 'completed', $this->shop_taxonomy);
 		$args = array(
-			'order'          => 'DESC',
+			'order'          => 'ASC',
 			'tax_query'      => array(
 				array(
 					'taxonomy' => $this->shop_taxonomy,
@@ -448,6 +448,7 @@ class WC_Fulfillment {
 		);
 		$response = $this->api('update', $request);
 		if ( $response && !empty($response->Orders)) {
+			$tracking_providers = array_map( 'sanitize_title', array( 'Fedex', 'OnTrac', 'UPS', 'USPS' ) );
 			foreach($response->Orders as $order) {
 				// nothing shipped yet
 				if ( $order->OrderDetailShippedCount === 0 ) continue;
@@ -460,11 +461,20 @@ class WC_Fulfillment {
 						$provider = @$shipment->ServiceProvider;
 						$date_shipped = @$shipment->ShipDate;
 						$tracking_no = @$shipment->TrackingNumber;
-					
+
+						if ( empty($provider) || empty($date_shipped) || empty($tracking_no) ) continue;
+
 						// add extra if Plugin 'Shipment Tracking for WooCommerce' detected
 						if ( is_plugin_active( "woocommerce-shipment-tracking/shipment-tracking.php" ) ) {
-							update_post_meta( $order_id, '_tracking_provider', $provider );
-							update_post_meta( $order_id, '_tracking_number', $tracking_no );
+							// use custom if not default
+							if ( $provider = sanitize_title($provider) && !in_array( $provider, $tracking_providers) ) {
+								// this should be a link format
+								update_post_meta( $order_id, '_custom_tracking_link', $tracking_no );
+								update_post_meta( $order_id, '_custom_tracking_provider', $provider );
+							} else {
+								update_post_meta( $order_id, '_tracking_provider', $provider );
+								update_post_meta( $order_id, '_tracking_number', $tracking_no );
+							}
 							update_post_meta( $order_id, '_date_shipped', strtotime($date_shipped) );
 						}
 					}
