@@ -458,7 +458,7 @@ class WC_Fulfillment {
 					$order_id = $order->ThirdPartyOrderNumber;
 					$open_orders[$order_id] = $order->OrderNumber;
 					foreach($order->Shipments as $shipment) {
-						$provider = @$shipment->ServiceProvider;
+						$provider = @$shipment->ServiceProvider ? sanitize_title($shipment->ServiceProvider) : false;
 						$date_shipped = @$shipment->ShipDate;
 						$tracking_no = @$shipment->TrackingNumber;
 
@@ -467,13 +467,14 @@ class WC_Fulfillment {
 						// add extra if Plugin 'Shipment Tracking for WooCommerce' detected
 						if ( is_plugin_active( "woocommerce-shipment-tracking/shipment-tracking.php" ) ) {
 							// use custom if not default
-							if ( $provider = sanitize_title($provider) && !in_array( $provider, $tracking_providers) ) {
+							if ( !in_array( $provider, $tracking_providers) ) {
 								update_post_meta( $order_id, '_custom_tracking_link', $tracking_no ); // this should be in a link format
 								update_post_meta( $order_id, '_custom_tracking_provider', $provider );
 								delete_post_meta( $order_id, '_tracking_provider' ); // remove stale tracking
 							} else {
 								update_post_meta( $order_id, '_tracking_provider', $provider );
 								update_post_meta( $order_id, '_tracking_number', $tracking_no );
+								delete_post_meta( $order_id, '_custom_tracking_provider' ); // remove stale tracking
 							}
 							update_post_meta( $order_id, '_date_shipped', strtotime($date_shipped) );
 						}
