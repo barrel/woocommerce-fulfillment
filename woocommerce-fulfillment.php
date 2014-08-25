@@ -16,15 +16,22 @@ if ( ! function_exists( 'woothemes_queue_update' ) )
 	require_once( 'woo-includes/woo-functions.php' );
 
 /**
- * Plugin updates
+ * Plugin activation/deactivation/uninstall hooks
  */
-//woothemes_queue_update( plugin_basename( __FILE__ ), '', '' );
+register_activation_hook(   __FILE__, array( 'WC_Fulfillment', 'activate' ) );
+register_deactivation_hook( __FILE__, array( 'WC_Fulfillment', 'deactivate' ) );
+register_uninstall_hook(    __FILE__, array( 'WC_Fulfillment', 'uninstall' ) );
+
+/**
+ * Plugin updates (disabled)
+ */
+# woothemes_queue_update( plugin_basename( __FILE__ ), '', '' );
 
 class WC_Fulfillment {
 	public $domain;
 	public $debug = false;
 	public $shop_taxonomy = 'shop_order_status';
-
+	
 	/**
 	 * Constructor: Filters and Actions.
 	 * @return	void
@@ -34,9 +41,6 @@ class WC_Fulfillment {
 		$this->current_tab = ( isset( $_GET['tab'] ) ) ? $_GET['tab'] : 'general';
 
 		load_plugin_textdomain( $this->domain, false, basename( dirname( __FILE__ ) ) . '/languages' );
-
-		if ( function_exists( 'register_activation_hook' ) )
-			register_activation_hook( __FILE__, array(&$this, 'activate') );
 
 		add_action( 'woocommerce_settings_tabs', array( &$this, 'add_settings_tab' ), 10 );
 		add_action( 'woocommerce_settings_tabs_woo_sf', array( &$this, 'settings_tab_action' ), 10 );
@@ -53,6 +57,12 @@ class WC_Fulfillment {
 	}
 	
 	function activate(){}
+
+	function deactivate(){
+		wp_clear_scheduled_hook('woo_sf_cron_repeat_event');
+	}
+
+	function uninstall(){}
 
 	/**
 	 * Output settings tab.
