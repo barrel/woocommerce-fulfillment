@@ -59,6 +59,10 @@ class WC_Fulfillment {
 	function activate(){}
 
 	function deactivate(){
+		if ( ! current_user_can( 'activate_plugins' ) )
+			return;
+		$plugin = isset( $_REQUEST['plugin'] ) ? $_REQUEST['plugin'] : '';
+		check_admin_referer( "deactivate-plugin_{$plugin}" );
 		wp_clear_scheduled_hook('woo_sf_cron_repeat_event');
 	}
 
