@@ -21,6 +21,9 @@ if ( ! function_exists( 'woothemes_queue_update' ) )
 register_activation_hook(   __FILE__, array( 'WC_Fulfillment', 'activate' ) );
 register_deactivation_hook( __FILE__, array( 'WC_Fulfillment', 'deactivate' ) );
 register_uninstall_hook(    __FILE__, array( 'WC_Fulfillment', 'uninstall' ) );
+add_action( 'plugins_loaded', function (){
+	$GLOBALS['WC_Fulfillment'] = new WC_Fulfillment();
+});
 
 /**
  * Plugin updates (disabled)
@@ -764,5 +767,3 @@ class WC_Fulfillment {
 		}
 	}
 }
-
-$GLOBALS['WC_Fulfillment'] = new WC_Fulfillment();
