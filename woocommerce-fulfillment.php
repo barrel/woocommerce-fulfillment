@@ -108,11 +108,15 @@ class WC_Fulfillment {
 		global $woocommerce;
 
 		$this->shipment_tracking_plugin = "";
-		if ( is_plugin_active( "woocommerce-shipment-tracking/shipment-tracking.php" ) )
+		if ( is_admin() && is_plugin_active( "woocommerce-shipment-tracking/shipment-tracking.php" ) ) {
 			$this->shipment_tracking_plugin = sprintf(
 				'<p class="update-nag below-h2" style="margin-top: 0px;">%s</p>',
 				__( "Plugin <b>Shipment Tracking for WooCommerce</b> detected. Script will update tracking information", $this->domain )
 			);
+			update_option('woo_sf_shipment_tracking', true);
+		} else {
+			delete_option('woo_sf_shipment_tracking');
+		}
 
 		// Fulfillment API URL
 		$this->url = home_url( '/' ) . 'woo-fulfillment-api';
@@ -482,7 +486,7 @@ class WC_Fulfillment {
 						if ( empty($provider) || empty($date_shipped) || empty($tracking_no) ) continue;
 
 						// add extra if Plugin 'Shipment Tracking for WooCommerce' detected
-						if ( is_plugin_active( "woocommerce-shipment-tracking/shipment-tracking.php" ) ) {
+						if ( get_option('woo_sf_shipment_tracking') ) {
 							// use custom if not default
 							if ( !in_array( $provider, $tracking_providers) ) {
 								update_post_meta( $order_id, '_custom_tracking_link', $tracking_no ); // this should be in a link format
