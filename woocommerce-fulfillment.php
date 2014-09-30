@@ -315,6 +315,7 @@ class WC_Fulfillment {
 	public function process_order($order_id) {
 		if ( !$this->api_ready() ) return false;
 		$order = new WC_Order($order_id);
+		$total_discount = $order->get_total_discount();
 		$order_details = array();
 		$order_results_codes = array(0,3);
 	
@@ -366,8 +367,10 @@ class WC_Fulfillment {
 	
 		if (!empty($order->order_shipping)) $order_array["Order"]["Freight"] = $order->order_shipping;
 		if (!empty($order->order_tax)) $order_array["Order"]["SalesTax"] = $order->order_tax;
-		if (!empty($order->order_discount)) $order_array["Order"]["DiscountType"] = 1;
-		if (!empty($order->order_discount)) $order_array["Order"]["DiscountAmount"] = $order->order_discount;
+		if (!empty($total_discount) && ($total_discount > 0.01)) {
+			$order_array["Order"]["DiscountType"] = 1;
+			$order_array["Order"]["DiscountAmount"] = $total_discount;
+		}
 		if (!empty($order->shipping_address_2)) $order_array["Order"]["Address"]["Line2"] = $order->shipping_address_2;
 
 		$fulfilled = $this->api('submit', $order_array);
