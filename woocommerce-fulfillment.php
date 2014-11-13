@@ -682,9 +682,6 @@ class WC_Fulfillment {
 	 * @return	void
 	**/
 	public function cron_setup_schedule() {
-		$term_id = get_option('woo_sf_import_status', 'completed');
-		$term_by = $term_id === 'completed' ? 'slug' : 'id';
-		$this->complete_status = get_term_by($term_by, $term_id, $this->shop_taxonomy);
 
 		// manually trigger the cron process
 		if ( !empty($_GET['cron']) && wp_verify_nonce( $_GET['cron'], 'cron' ) ) {
@@ -709,6 +706,10 @@ class WC_Fulfillment {
 	 * @return	void
 	**/
 	public function cron_process_all(){
+		$term_id = get_option('woo_sf_import_status', 'completed');
+		$term_by = $term_id === 'completed' ? 'slug' : 'id';
+		$this->complete_status = get_term_by($term_by, $term_id, $this->shop_taxonomy);
+
 		$total_processed = 0;
 		$errors = array();
 
