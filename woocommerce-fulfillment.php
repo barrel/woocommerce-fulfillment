@@ -34,6 +34,7 @@ class WC_Fulfillment {
 	public $domain;
 	public $debug = false;
 	public $shop_taxonomy = 'shop_order_status';
+	public $complete_status;
 	
 	/**
 	 * Constructor: Filters and Actions.
@@ -676,13 +677,23 @@ class WC_Fulfillment {
 	}
 
 	/**
+	 * Setup the $this->complete_status
+	**/
+	private function setup_complete_status() {
+		if (!isset($this->complete_status)) {
+			$term_id = get_option('woo_sf_import_status', 'completed');
+			$term_by = $term_id === 'completed' ? 'slug' : 'id';
+			$this->complete_status = get_term_by($term_by, $term_id, $this->shop_taxonomy);
+		}
+	}
+	/**
 	 * Schedule virtual cron job based on interval.
 	 * Also used as a manual trigger for the `cron_process_all()` method.
 	 *
 	 * @return	void
 	**/
 	public function cron_setup_schedule() {
-
+		$this->setup_complete_status();
 		// manually trigger the cron process
 		if ( !empty($_GET['cron']) && wp_verify_nonce( $_GET['cron'], 'cron' ) ) {
 			$this->cron_process_all();
@@ -706,9 +717,7 @@ class WC_Fulfillment {
 	 * @return	void
 	**/
 	public function cron_process_all(){
-		$term_id = get_option('woo_sf_import_status', 'completed');
-		$term_by = $term_id === 'completed' ? 'slug' : 'id';
-		$this->complete_status = get_term_by($term_by, $term_id, $this->shop_taxonomy);
+		$this->setup_complete_status();
 
 		$total_processed = 0;
 		$errors = array();
