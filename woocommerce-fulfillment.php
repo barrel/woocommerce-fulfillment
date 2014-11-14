@@ -39,7 +39,7 @@ class WC_Fulfillment {
 	/**
 	 * Constructor: Filters and Actions.
 	 * @return	void
-	**/
+	 */
 	public function __construct() {
 		$this->domain = 'woo-fulfillment';
 		$this->current_tab = ( isset( $_GET['tab'] ) ) ? $_GET['tab'] : 'general';
@@ -60,9 +60,9 @@ class WC_Fulfillment {
 			add_action( 'admin_notices', array(&$this, 'admin_notice') );
 	}
 	
-	function activate(){}
+	public static function activate(){}
 
-	function deactivate(){
+	public static function deactivate(){
 		if ( ! current_user_can( 'activate_plugins' ) )
 			return;
 		$plugin = isset( $_REQUEST['plugin'] ) ? $_REQUEST['plugin'] : '';
@@ -70,13 +70,13 @@ class WC_Fulfillment {
 		wp_clear_scheduled_hook('woo_sf_cron_repeat_event');
 	}
 
-	function uninstall(){}
+	public static function uninstall(){}
 
 	/**
 	 * Output settings tab.
 	 *
-	 * @return	void
-	**/
+	 * @return	void output html
+	 */
 	public function add_settings_tab() {
 		$class = ($this->current_tab=='woo_sf'?'nav-tab-active ':'').'nav-tab';
 		printf('<a href="%s" class="%s">Fulfillment</a>', admin_url( 'admin.php?page=woocommerce&tab=woo_sf' ), $class);
@@ -86,7 +86,7 @@ class WC_Fulfillment {
 	 * Output settings fields.
 	 *
 	 * @return	void
-	**/
+	 */
 	public function settings_tab_action() {
 		global $woocommerce_settings;
 
@@ -104,7 +104,7 @@ class WC_Fulfillment {
 	 * Load settings data.
 	 *
 	 * @return	void
-	**/
+	 */
 	public function load_settings() {
 		global $woocommerce;
 
@@ -137,7 +137,7 @@ class WC_Fulfillment {
 	 * Return the array of registered settings fields.
 	 *
 	 * @return	array
-	**/
+	 */
 	private function load_form_fields() {
 		$sync_time = __('Never');
 		if ( $_sync_time = get_option('woo_sf_sync_time') ) {
@@ -294,7 +294,7 @@ class WC_Fulfillment {
 	 * Save settings routine.
 	 *
 	 * @return	bool
-	**/
+	 */
 	public function save_settings() {
 		global $woocommerce_settings;
 		$current_tab = 'woo_sf';
@@ -310,9 +310,9 @@ class WC_Fulfillment {
 	/**
 	 * Process an order for fulfillment.
 	 *
-	 * @param	(int) $order_id
-	 * @return	void
-	**/
+	 * @param	int $order_id
+	 * @return	int | bool
+	 */
 	public function process_order($order_id) {
 		if ( !$this->api_ready() ) return false;
 		$order = new WC_Order($order_id);
@@ -333,7 +333,7 @@ class WC_Fulfillment {
 			/**
 			 * NOTE: CA Short ERP does not support flat discount per item;
 			 * DiscountAmount only applied to Order->DiscountAmount
-			**/
+			 */
 			$product = $order->get_product_from_item($item);
 			$order_details[] = array(
 				"ItemNumber"     => $product->get_sku(),
@@ -405,9 +405,9 @@ class WC_Fulfillment {
 	/**
 	 * Get all 'processing' orders (with override).
 	 *
-	 * @param	(array) $override - query parameters
-	 * @return	object (WP_Query)
-	**/
+	 * @param	array $override - query parameters
+	 * @return	object instanceof WP_Query
+	 */
 	private function get_orders_with($override = array()){
 		$processing = get_term_by('slug', 'processing', $this->shop_taxonomy);
 		$args = array(
@@ -430,15 +430,15 @@ class WC_Fulfillment {
 	/**
 	 * Update completed orders with fulfillment status.
 	 *
-	 * @param	(int) $order_id
-	 * @return	array (of integers)
-	**/
+	 * @param	int $order_id
+	 * @return	array list of integers
+	 */
 	public function update_orders() {
 		$open_orders = array();
 		/** 
 		 * @startDate - oldest completed order with valid fulfillment and without tracking
 		 * @endDate - today is not inclusive and future scope is ok 
-		**/
+		 */
 		
 		$completed = get_term_by('slug', 'completed', $this->shop_taxonomy);
 		$args = array(
@@ -514,7 +514,7 @@ class WC_Fulfillment {
 	 * Check if required configuration is set for API to work.
 	 *
 	 * @return	bool
-	**/
+	 */
 	private function api_ready() {
 		$option_keys = array( 'woo_sf_api_domain', 'woo_sf_api_url', 'woo_sf_username', 'woo_sf_password');
 		foreach( $option_keys as $option_key )
@@ -526,9 +526,9 @@ class WC_Fulfillment {
 	/**
 	 * Prepare and execute CURL for the API call.
 	 *
-	 * @param	(array) $overrides
+	 * @param	array $overrides
 	 * @return	object | array
-	**/
+	 */
 	private function api_init($overrides = array()) {
 		$ch = curl_init();
 		$options = $overrides + array(
@@ -576,9 +576,9 @@ class WC_Fulfillment {
 	/**
 	 * Return the service result name.
 	 *
-	 * @param	(int) $code
+	 * @param	int $code
 	 * @return	string
-	**/
+	 */
 	private function api_get_service_result($code) {
 		switch($code){
 			case 0: return "Success";break;
@@ -593,9 +593,9 @@ class WC_Fulfillment {
 	/**
 	 * Obtain the fully-qualified API URL from settings.
 	 *
-	 * @param	(string) $endpoint
+	 * @param	string $endpoint
 	 * @return	string
-	**/
+	 */
 	private function api_url($endpoint) {
 		$url = array(
 			esc_url( get_option('woo_sf_api_domain') ),
@@ -608,10 +608,10 @@ class WC_Fulfillment {
 	/**
 	 * Perform an API call for fulfillment.
 	 *
-	 * @param	(string) $type
-	 * @param	(array) $data
+	 * @param	string $type
+	 * @param	array $data
 	 * @return	void
-	**/
+	 */
 	private function api($type, $data = array()){
 		switch ($type){
 			case 'submit': $end = "SubmitOrder"; break;
@@ -640,9 +640,9 @@ class WC_Fulfillment {
 	/**
 	 * Helper function to trim forward slash from url parts.
 	 *
-	 * @param	(string) $in
+	 * @param	string $in
 	 * @return	string
-	**/
+	 */
 	public function xtrim ($in){
 		return trim($in, "/");
 	}
@@ -652,9 +652,9 @@ class WC_Fulfillment {
 	 * NOTE: CA Short ERP only supports 3-digit country codes.
 	 * TODO: Modify filter to support countries beyond US.
 	 *
-	 * @param	(string) $code
+	 * @param	string $code
 	 * @return	string
-	**/
+	 */
 	public function convert_country_codes($code) {
 		switch($code){
 			case "US": return "USA"; break;
@@ -665,9 +665,9 @@ class WC_Fulfillment {
 	/**
 	 * Add new interval to array of existing cron intervals.
 	 *
-	 * @param	(array) $schedules
+	 * @param	array $schedules array of schedule intervals and titles
 	 * @return	array
-	**/
+	 */
 	public function cron_add_interval( $schedules ) {
 		$schedules['hourly'] = array(
 			'interval' => 3600, 
@@ -678,7 +678,8 @@ class WC_Fulfillment {
 
 	/**
 	 * Setup the $this->complete_status
-	**/
+	 * @return void
+	 */
 	private function setup_complete_status() {
 		if (!isset($this->complete_status)) {
 			$term_id = get_option('woo_sf_import_status', 'completed');
@@ -686,12 +687,13 @@ class WC_Fulfillment {
 			$this->complete_status = get_term_by($term_by, $term_id, $this->shop_taxonomy);
 		}
 	}
+
 	/**
 	 * Schedule virtual cron job based on interval.
 	 * Also used as a manual trigger for the `cron_process_all()` method.
 	 *
 	 * @return	void
-	**/
+	 */
 	public function cron_setup_schedule() {
 		$this->setup_complete_status();
 		// manually trigger the cron process
@@ -715,7 +717,7 @@ class WC_Fulfillment {
 	 * Process and update fulfillment status on all open orders.
 	 *
 	 * @return	void
-	**/
+	 */
 	public function cron_process_all(){
 		$this->setup_complete_status();
 
@@ -746,8 +748,8 @@ class WC_Fulfillment {
 	/**
 	 * Output admin error and update notices.
 	 *
-	 * @return	string
-	**/
+	 * @return	void echo html
+	 */
 	public function admin_notice() {
 		$stat_txt = __('Manual fulfillment complete.');
 		$note_txt = __('Note: This does not indicate success.');
