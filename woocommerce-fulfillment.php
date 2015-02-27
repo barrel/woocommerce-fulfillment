@@ -56,6 +56,10 @@ class WC_Fulfillment {
 		add_action( 'woo_sf_cron_repeat_event', array(&$this, 'cron_process_all') );
 		add_filter( 'woo_sf_filter_country', array(&$this, 'convert_country_codes'));
 		
+		// filters for csv order export add-on
+		add_filter( 'wc_customer_order_csv_export_order_headers', array( &$this, 'wc_csv_export_modify_column_headers') );
+		add_filter( 'wc_customer_order_csv_export_order_row', array(&$this, 'wc_csv_export_modify_row_data'), 10, 3 ); 
+		
 		if ($this->current_tab==='woo_sf') 
 			add_action( 'admin_notices', array(&$this, 'admin_notice') );
 	}
@@ -784,5 +788,41 @@ class WC_Fulfillment {
 		if ( @$_GET['notice'] === 'updated') {
 			printf('<div class="updated"><p>%s <b>%s</b></p></div>', $stat_txt, $note_txt);
 		}
+	}
+
+	/**
+	 * Add export custom column headers.
+	 * @param	array column headers
+	 * @return	array modified column headers
+	 */
+	function wc_csv_export_modify_column_headers( $column_headers ) {
+		$new_headers = array(
+			'woo_sf_order_error_code' => 'Fulfillment Error Code',
+			'woo_sf_order_id'         => 'Fulfillment Order Number',
+		);
+		return array_merge( $column_headers, $new_headers );
+	}
+
+	/**
+	 * Set the data for each of the custom columns exported.
+	 * @param	array order data
+	 * @param 	object order object
+	 * @param	object csv generator
+	 * @return	array order data
+	 */
+	function wc_csv_export_modify_row_data( $order_data, $order, $csv_generator ) {
+		$custom_data = array(
+			'woo_sf_order_error_code' => get_post_meta( $order->id, 'woo_sf_order_error_code', true ),
+			'woo_sf_order_id'         => get_post_meta( $order->id, 'woo_sf_order_id', true ),
+		);
+		$new_order_data = array();
+		if ( isset( $csv_generator->order_format ) && ( 'default_one_row_per_item' == $csv_generator->order_format || 'legacy_one_row_per_item' == $csv_generator->order_format ) ) {
+			foreach ( $order_data as $data ) {
+				$new_order_data[] = array_merge( (array) $data, $custom_data );
+			}
+		} else {
+			$new_order_data = array_merge( $order_data, $custom_data );
+		}
+		return $new_order_data;
 	}
 }
