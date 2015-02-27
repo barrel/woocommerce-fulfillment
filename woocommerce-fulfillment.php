@@ -797,8 +797,8 @@ class WC_Fulfillment {
 	 */
 	function wc_csv_export_modify_column_headers( $column_headers ) {
 		$new_headers = array(
-			'woo_sf_order_error_code' => 'Fulfillment Error Code',
-			'woo_sf_order_id'         => 'Fulfillment Order Number',
+			'woo_sf_order_error_code' => 'woo_sf_order_error_code',
+			'woo_sf_order_id'         => 'woo_sf_order_id',
 		);
 		return array_merge( $column_headers, $new_headers );
 	}
