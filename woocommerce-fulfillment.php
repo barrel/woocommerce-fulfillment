@@ -2,7 +2,7 @@
 /*
 Plugin Name: WooCommerce Fulfillment
 Plugin URI: http://www.woothemes.com/woocommerce/
-Version: 1.0
+Version: 1.1
 Description: Add custom fulfillment support to WooCommerce.
 Author: BarrelNY
 Author URI: http://barrelny.com/
@@ -33,7 +33,6 @@ add_action( 'plugins_loaded', function (){
 class WC_Fulfillment {
 	public $domain;
 	public $debug = false;
-	public $shop_taxonomy = 'shop_order_status';
 	public $complete_status;
 	
 	/**
@@ -83,7 +82,7 @@ class WC_Fulfillment {
 	 */
 	public function add_settings_tab() {
 		$class = ($this->current_tab=='woo_sf'?'nav-tab-active ':'').'nav-tab';
-		printf('<a href="%s" class="%s">Fulfillment</a>', admin_url( 'admin.php?page=woocommerce&tab=woo_sf' ), $class);
+		printf('<a href="%s" class="%s">Fulfillment</a>', admin_url( 'admin.php?page=wc-settings&tab=woo_sf' ), $class);
 	}
 
 	/**
@@ -127,10 +126,10 @@ class WC_Fulfillment {
 		$this->url = home_url( '/' ) . 'woo-fulfillment-api';
 	
 		// Order Statuses
-		$order_statuses = get_terms( $this->shop_taxonomy, "hide_empty=0" );
+		$order_statuses = wc_get_order_statuses();
 		$this->order_statuses = array();
-		foreach ( $order_statuses as $status ) {
-			$this->order_statuses[$status->term_id] = $status->name;
+		foreach ( $order_statuses as $status_name => $status) {
+			$this->order_statuses[$status_name] = $status;
 		}
 
 		// Shipping Methods
@@ -258,7 +257,7 @@ class WC_Fulfillment {
 		);
 		$desc = sprintf('%s<p><a class="button" href="%s">%s &rarr;</a></p>', 
 			$manual,
-			admin_url('admin.php?page=woocommerce&tab=woo_sf&cron='.wp_create_nonce( 'cron' )),
+			admin_url('admin.php?page=wc-settings&tab=woo_sf&cron='.wp_create_nonce( 'cron' )),
 			__('Process')
 		);
 
@@ -389,7 +388,7 @@ class WC_Fulfillment {
 		if ( is_object($fulfilled) && in_array($submit_code, $order_results_codes) && $order_no > 0 && $service_code === 0) {
 			// add fulfillment order number and mark as completed
 			update_post_meta($order_id, 'woo_sf_order_id', $order_no);
-			$order->update_status($this->complete_status->slug);
+			$order->update_status($this->complete_status);
 
 			// delete error data
 			delete_post_meta($order_id, 'woo_sf_order_error_code');
@@ -409,22 +408,15 @@ class WC_Fulfillment {
 	/**
 	 * Get all 'processing' orders (with override).
 	 *
+	 * @internal WC 2.3 no longer uses taxonomy-based status
 	 * @param	array $override - query parameters
 	 * @return	object instanceof WP_Query
 	 */
 	private function get_orders_with($override = array()){
-		$processing = get_term_by('slug', 'processing', $this->shop_taxonomy);
 		$args = array(
 			'post_type'      => 'shop_order',
-			'post_status'    => 'publish',
+			'post_status'    => 'wc-processing',
 			'posts_per_page' => -1,
-			'tax_query'      => array(
-				array(
-					'taxonomy' => $this->shop_taxonomy,
-					'terms'    => $processing->term_id,
-					'operator' => 'IN'
-				)
-			),
 		);
 		$args = array_merge($args, $override);
 		$orders = new WP_Query($args);
@@ -444,16 +436,9 @@ class WC_Fulfillment {
 		 * @endDate - today is not inclusive and future scope is ok 
 		 */
 		
-		$completed = get_term_by('slug', 'completed', $this->shop_taxonomy);
 		$args = array(
 			'order'          => 'ASC',
-			'tax_query'      => array(
-				array(
-					'taxonomy' => $this->shop_taxonomy,
-					'terms'    => $completed->term_id,
-					'operator' => 'IN'
-				)
-			),
+			'post_status'    => $this->complete_status,
 			'meta_query'     => array(
 				'relation' => 'AND',
 				array(
@@ -686,9 +671,8 @@ class WC_Fulfillment {
 	 */
 	private function setup_complete_status() {
 		if (!isset($this->complete_status)) {
-			$term_id = get_option('woo_sf_import_status', 'completed');
-			$term_by = $term_id === 'completed' ? 'slug' : 'id';
-			$this->complete_status = get_term_by($term_by, $term_id, $this->shop_taxonomy);
+			$status_slug = get_option('woo_sf_import_status', 'wc-completed');
+			$this->complete_status = $status_slug;
 		}
 	}
 
@@ -703,7 +687,7 @@ class WC_Fulfillment {
 		// manually trigger the cron process
 		if ( !empty($_GET['cron']) && wp_verify_nonce( $_GET['cron'], 'cron' ) ) {
 			$this->cron_process_all();
-			$sendback = add_query_arg( array( 'page' => 'woocommerce', 'tab' => 'woo_sf', 'notice' => 'updated' ), '' );
+			$sendback = add_query_arg( array( 'page' => 'wc-settings', 'tab' => 'woo_sf', 'notice' => 'updated' ), '' );
 			wp_redirect( $sendback );
 			exit;
 		}
@@ -763,7 +747,7 @@ class WC_Fulfillment {
 
 		if ( is_array($error_posts) && !empty($error_posts)) {
 			foreach ($error_posts as $key => $error_post_id) {
-				$error_url = admin_url( 'admin.php?page=woocommerce&tab=woo_sf&notice=error&id='.$error_post_id );
+				$error_url = admin_url( 'admin.php?page=wc-settings&tab=woo_sf&notice=error&id='.$error_post_id );
 				$error_posts[$key] = sprintf('<a href="%s">%d</a>', $error_url, $error_post_id);
 			}
 			$message = sprintf( __('The following order numbers could not be processed: %s'), implode(', ', $error_posts));
