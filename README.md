@@ -5,7 +5,7 @@
 ## Config and Setup
 This project is a static php plugin for WordPress and WooCommerce, which means that the WooCommerce plugin is a dependency.
 
-- Ensure WooCommerce ~2.0.2.0 is installed.
+- Ensure WooCommerce ~2.3.8 is installed.
 - Download the [zip](https://github.com/barrel/woocommerce-fulfillment/archive/master.zip) file from github.
 - Install the plugin by uploading the zip (Plugins > Add New > Upload).
 - Activate the plugin.
