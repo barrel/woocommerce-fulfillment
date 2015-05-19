@@ -430,6 +430,7 @@ class WC_Fulfillment {
 	 * @return	array list of integers
 	 */
 	public function update_orders() {
+		return; // TODO: re-evaluate offering tracking as this does not work reliably.
 		$open_orders = array();
 		/** 
 		 * @startDate - oldest completed order with valid fulfillment and without tracking
